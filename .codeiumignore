@@ -1,0 +1,7 @@
+# Files Windsurf should not index (to save RAM and speed up AI)
+data/
+models/prod_v1/
+.git/
+__pycache__/
+*.csv
+*.pkl

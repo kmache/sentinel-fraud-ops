@@ -1,0 +1,25 @@
+# --- Python & System Junk ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+.env
+.venv/
+venv/
+env/
+
+# --- Large Data Files ---
+# Ignore all CSVs in data, but keep the folder structure
+data/raw/train_*.csv
+data/raw/test_raw.csv
+data/processed/*.csv
+
+# --- Large Model Files ---
+# Ignore heavy model binaries 
+models/prod_v1/*.pkl
+models/prod_v1/*.bin
+models/dev_experiment_2026/
+
+# --- IDE/Editor ---
+.vscode/
+.idea/
