@@ -167,23 +167,32 @@ class SentinelInference:
 
 
     def _get_feat4board(self, data: Union[Dict, pd.DataFrame]=None, 
-                        features: List[str]=['UID_velocity_24h', 'dist1', 'D1_norm', 'device_vendor', 'P_emaildomain_vendor_id',
-                              'card_email_combo','product_network_combo','C13']) -> Dict[str, Any]:
+                        features: List[str]=[
+                            'TransactionAmt',      
+                            'ProductCD',
+                            'card_email_combo_fraud_rate',      
+                            'P_emaildomain', 'R_emaildomain_is_free',  
+                            'UID_velocity_24h',   
+                            'dist1',              
+                            'addr1', 'card1_freq_enc',                        
+                            'D15',                
+                            'device_vendor',        
+                            'C13', 'C1', 'C14', 'UID_vel'
+                        ]) -> Dict[str, Any]:
         """
-        Get features for dashboard.
-        
-        Args:
-            data: Dictionary (single) or DataFrame (batch).
-        
-        Returns:
-            Dictionary with features.
+        Get features for dashboard, prioritizing explainability and impact.
         """
         if data is None:
             data = self.df_features
+
         feat4board = {}
+        if 'TransactionDT' in data:
+             feat4board['hour_of_day'] = (data['TransactionDT'] // 3600) % 24
+
         for col in features:
             if col in data: 
                 feat4board[col] = data[col].values.tolist()
+                     
         return feat4board
 
     @staticmethod

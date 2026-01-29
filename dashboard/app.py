@@ -305,7 +305,6 @@ class SentinelEngine:
             data = [json.loads(x) for x in raw_data]
             df = pd.DataFrame(data)
             
-            # --- CRITICAL: TYPE CASTING & CLEANUP ---
             if 'timestamp' in df.columns:
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
             
@@ -315,7 +314,6 @@ class SentinelEngine:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-            # Ensure essential columns exist
             if 'ground_truth' not in df.columns: df['ground_truth'] = 0
             if 'composite_risk_score' not in df.columns: df['composite_risk_score'] = 0.0
             if 'TransactionAmt' not in df.columns: df['TransactionAmt'] = 0.0
