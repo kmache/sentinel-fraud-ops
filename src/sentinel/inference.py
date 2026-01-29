@@ -43,7 +43,6 @@ class SentinelInference:
         start_time = time.time()
 
         try:
-            # 1. Load Production Config (Weights & Thresholds)
             config_path = self.model_dir / "production_config.json"
             if not config_path.exists():
                 raise FileNotFoundError("production_config.json missing. Did you run select_best_model()?")
@@ -51,18 +50,15 @@ class SentinelInference:
             with open(config_path, "r") as f:
                 self.config = json.load(f)
             
-            # 2. Load Transformers
             self.preprocessor = joblib.load(self.model_dir / 'sentinel_preprocessor.pkl')
             self.engineer = joblib.load(self.model_dir / 'sentinel_engineer.pkl')
             
-            # 3. Load Categorical Feature List (Critical for LGBM/XGB robustness)
             cat_path = self.model_dir / 'categorical_features.json'
             if cat_path.exists():
                 with open(cat_path, 'r') as f: self.cat_features = json.load(f)
             else:
                 logger.warning("categorical_features.json not found. Auto-detection might fail.")
 
-            # 4. Load Ensemble Models
             # Config example: {"weights": {"lgb": 0.7, "xgb": 0.3}, ...}
             weights = self.config.get("weights", {})
             for model_name in weights.keys():
@@ -109,21 +105,18 @@ class SentinelInference:
             print('warning: no TransactionID column found, generating one...')
             df['TransactionID'] = f"tx_{int(time.time() * 1000)}"
 
-        def get_val(df, col, default=0):
-            return df[col].iloc[0] if col in df.columns else default
-
         y_true = df['isFraud'] if 'isFraud' in df.columns else 0
 
         try:
             df_clean = self.preprocessor.transform(df)
             
-            df_features = self.engineer.transform(df_clean)
+            self.df_features = self.engineer.transform(df_clean)
 
-            final_probs = np.zeros(len(df_features))
+            final_probs = np.zeros(len(self.df_features))
             weights = self.config['weights']
             
             for name, weight in weights.items():
-                tem_df = df_features[self.features[name]]
+                tem_df = self.df_features[self.features[name]]
                 for col in self.cat_features:
                     if col in tem_df.columns:
                         tem_df[col] = tem_df[col].astype('category')
@@ -133,19 +126,6 @@ class SentinelInference:
                 gc.collect()
             hard_threshold = self.config['threshold']
 
-            #extract features for dashboard
-            dashboard_features = {
-            'UID_velocity_24h': float(get_val(df_features, 'UID_velocity_24h', 0)),
-            'dist1': float(get_val(df_features, 'dist1', data.get('dist1', 0))),
-            'D1_norm': float(get_val(df_features, 'D1_norm', data.get('D1', 0))),
-            'device_vendor': str(data.get('device_vendor', data.get('DeviceInfo', 'Unknown'))),
-            'P_emaildomain_vendor_id': str(data.get('P_emaildomain', 'Unknown')),
-            'card_email_combo': str(get_val(df_features, 'card_email_combo', 'Unknown')),
-            'product_network_combo': str(get_val(df_features, 'product_network_combo', 'Unknown')),
-            'C13': int(get_val(df_features, 'C13', data.get('C13', 0)))
-        }
-
-            
             if not is_batch:
                 prob = float(final_probs[0])
 
@@ -157,7 +137,6 @@ class SentinelInference:
                     "is_fraud": is_fraud,
                     "y_true": y_true,
                     "action": action,
-                    "dashboard_features": dashboard_features,
                     "meta": {
                         "model_version": self.config.get("selected_model", "ensemble"),
                         "threshold_used": hard_threshold,
@@ -175,7 +154,6 @@ class SentinelInference:
                     "is_frauds": is_frauds,
                     "y_true": y_true,
                     "actions": actions,
-                    "dashboard_features": dashboard_features,
                     "meta": {
                         "batch_size": len(df),
                         "timestamp": datetime.now().replace(microsecond=0).isoformat(),
@@ -187,11 +165,32 @@ class SentinelInference:
             logger.error(f"Prediction Error: {e}")
             raise RuntimeError(f"Inference pipeline failed: {str(e)}")
 
+
+    def _get_feat4board(self, data: Union[Dict, pd.DataFrame]=None, 
+                        features: List[str]=['UID_velocity_24h', 'dist1', 'D1_norm', 'device_vendor', 'P_emaildomain_vendor_id',
+                              'card_email_combo','product_network_combo','C13']) -> Dict[str, Any]:
+        """
+        Get features for dashboard.
+        
+        Args:
+            data: Dictionary (single) or DataFrame (batch).
+        
+        Returns:
+            Dictionary with features.
+        """
+        if data is None:
+            data = self.df_features
+        feat4board = {}
+        for col in features:
+            if col in data: 
+                feat4board[col] = data[col].values.tolist()
+        return feat4board
+
     @staticmethod
     def _get_action(prob: float, soft: float, hard: float) -> str:
         if prob >= hard: return "BLOCK"
         elif prob >= soft: return "CHALLENGE"
-        return "APPROVE"
+        return "APPROVE" 
 
 
 if __name__ == "__main__":
