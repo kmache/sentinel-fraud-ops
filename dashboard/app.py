@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(__file__))
 
 from styles import apply_custom_css, COLORS
 from api_client import SentinelApiClient
-from pages import executive, ops, ml, strategy, forensics # Added forensics
+from pages import executive, ops, ml, strategy, forensics
 
 # ==============================================================================
 # 1. SETUP
@@ -114,4 +114,4 @@ def main():
         st.rerun()
 
 if __name__ == "__main__":
-    main()
+    main() 
