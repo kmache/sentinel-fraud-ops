@@ -1,3 +1,7 @@
 pandas
 kafka-python
 numpy
+lz4 
+pydantic 
+circuitbreaker 
+redis
