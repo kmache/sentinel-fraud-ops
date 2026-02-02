@@ -1,8 +1,8 @@
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel
 
 class Transaction(BaseModel):
-    transaction_id: str
+    transaction_id: Any
     timestamp: str
     amount: float
     is_fraud: int

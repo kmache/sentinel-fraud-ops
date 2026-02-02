@@ -178,11 +178,31 @@ def get_stats():
         logger.error(f"Stats Error: {e}")
         raise HTTPException(status_code=500, detail="Database error")
 
+# @app.get("/recent", response_model=List[Transaction], tags=["Dashboard"])
+# def get_recent(limit: int = Query(500, ge=1, le=2000)):
+#     try:
+#         data = redis_client.lrange('sentinel_stream', 0, limit - 1)
+#         return [json.loads(item) for item in data]
+#     except Exception as e:
+#         logger.error(f"Recent Feed Error: {e}")
+#         return []
+
 @app.get("/recent", response_model=List[Transaction], tags=["Dashboard"])
 def get_recent(limit: int = Query(500, ge=1, le=2000)):
     try:
         data = redis_client.lrange('sentinel_stream', 0, limit - 1)
-        return [json.loads(item) for item in data]
+        results = []
+        for item in data:
+            try:
+                tx_dict = json.loads(item)
+                # Force transaction_id to string if you want consistent UI behavior
+                if "transaction_id" in tx_dict:
+                    tx_dict["transaction_id"] = str(tx_dict["transaction_id"])
+                
+                results.append(tx_dict)
+            except Exception as e:
+                continue
+        return results
     except Exception as e:
         logger.error(f"Recent Feed Error: {e}")
         return []
