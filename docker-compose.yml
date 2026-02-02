@@ -1,9 +1,9 @@
-version: '3.8'
-
+#version: '3.8'
 services:
   # --- INFRASTRUCTURE ---
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
+    container_name: sentinel-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -12,11 +12,12 @@ services:
     healthcheck:
       test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
       interval: 10s
-      timeout: 10s
-      retries: 10
+      timeout: 5s
+      retries: 5
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
+    container_name: sentinel-kafka
     depends_on:
       zookeeper:
         condition: service_healthy
@@ -29,23 +30,20 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      # Creates topics automatically on startup
-      KAFKA_CREATE_TOPICS: "transactions:1:1,predictions:1:1" 
     networks:
       - fraud-network
     healthcheck:
-      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
-      interval: 30s
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:29092", "--list"]
+      interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
+    container_name: sentinel-redis
     command: redis-server --appendonly yes --requirepass sentinel_pass_2024
     ports:
       - "6379:6379"
-    volumes:
-      - redis-data:/data
     networks:
       - fraud-network
     healthcheck:
@@ -54,13 +52,13 @@ services:
       timeout: 5s
       retries: 3
 
-  # --- APPLICATION LOGIC ---
+  # --- APPLICATION SERVICES ---
 
-  # 1. API: Backend for Metrics & Health
   api:
-    build: ./backend
-    # Overrides default CMD to run the API
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    build: 
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: sentinel-api
     ports:
       - "8000:8000"
     environment:
@@ -68,35 +66,32 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=sentinel_pass_2024
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - MODEL_CONFIG_PATH=/app/models/production_config.json
+    volumes:
+      - ./models:/app/models  # ADDED: Essential for reading production_config.json
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - fraud-network
-    restart: unless-stopped
+    restart: always
 
-  # 2. Stream Processor: The AI Worker
   stream-processor:
-    build: ./backend
-    # Overrides default CMD to run the Worker
-    command: python processor_worker.py
+    build: 
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: sentinel-worker
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - INPUT_TOPIC=transactions
       - OUTPUT_TOPIC=predictions
+      - DLQ_TOPIC=sentinel_dlq
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=sentinel_pass_2024
-      
-      # --- DEMO MODES ---
-      - MODE=ensemble
-      - WEIGHT_CB=0.5
-      - WEIGHT_LGB=0.5
-      - DEFAULT_THRESHOLD=0.5
-    # Volumes mount to Root (/) because Python code calculates BASE_DIR as /
+      - MODEL_DIR=/app/models/prod_v1
     volumes:
-      - ./models:/models
-      - ./artifacts:/artifacts
+      - ./models:/app/models
     depends_on:
       kafka:
         condition: service_healthy
@@ -104,16 +99,17 @@ services:
         condition: service_healthy
     networks:
       - fraud-network
-    restart: unless-stopped
+    restart: always
 
-  # 3. Producer: The Data Simulator
   producer:
-    build: ./simulator
+    build: 
+      context: ./simulator # Pointing to the folder containing simulator/Dockerfile
+    container_name: sentinel-simulator
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-      - KAFKA_TOPIC=transactions
-      - SIMULATION_RATE=2  # Transactions per second
-      - DATA_FILE=/app/data/test_raw.csv
+      - INPUT_TOPIC=transactions
+      - SIMULATION_RATE=2.0
+      - DATA_FILE=/app/data/raw/test_raw.csv
     volumes:
       - ./data:/app/data
     depends_on:
@@ -121,49 +117,23 @@ services:
         condition: service_healthy
     networks:
       - fraud-network
-    restart: unless-stopped
+    restart: always
 
-  # 4. Dashboard: Streamlit UI
   dashboard:
-    build: ./dashboard
+    build: 
+      context: ./dashboard # Pointing to the folder containing dashboard/Dockerfile
+    container_name: sentinel-dashboard
     ports:
       - "8501:8501"
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=sentinel_pass_2024
+      - BACKEND_URL=http://api:8000
     depends_on:
-      redis:
-        condition: service_healthy
+      api:
+        condition: service_started
     networks:
       - fraud-network
-    restart: unless-stopped
-
-  # --- MONITORING TOOLS ---
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-    depends_on:
-      - kafka
-    networks:
-      - fraud-network
-
-  redis-insight:
-    image: redislabs/redisinsight:latest
-    ports:
-      - "8001:8001"
-    depends_on:
-      - redis
-    networks:
-      - fraud-network
+    restart: always
 
 networks:
   fraud-network:
     driver: bridge
-
-volumes:
-  redis-data:

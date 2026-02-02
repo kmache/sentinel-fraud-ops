@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional
 # ==============================================================================
 # Default to 'backend' service name in Docker Compose network
 API_BASE_URL = os.getenv("BACKEND_URL", "http://backend:8000")
-REQUEST_TIMEOUT = 3  # Seconds
+REQUEST_TIMEOUT = 3
 
 logger = logging.getLogger("ApiClient")
 
@@ -39,7 +39,9 @@ class SentinelApiClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.ConnectionError:
-            logger.error(f"❌ Connection Error: Could not reach {url}")
+            # Suppress excessive logging for connection checks
+            if endpoint != "/health":
+                logger.error(f"❌ Connection Error: Could not reach {url}")
             return None
         except requests.exceptions.Timeout:
             logger.warning(f"⏳ Timeout: Backend did not respond in {REQUEST_TIMEOUT}s")
@@ -98,6 +100,7 @@ class SentinelApiClient:
             if 'timestamp' in df.columns:
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
             
+            # Reorder columns for readability if they exist
             cols = ['timestamp', 'transaction_id', 'amount', 'score', 'is_fraud', 'action']
             existing_cols = [c for c in cols if c in df.columns]
             extra_cols = [c for c in df.columns if c not in cols]
@@ -120,5 +123,27 @@ class SentinelApiClient:
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             
         return df
-    
-    
+
+    # ==========================================================================
+    # MODEL PERFORMANCE & ROI
+    # ==========================================================================
+    def get_model_performance(self, threshold: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Fetches ROI metrics, Recall, and AUC.
+        If threshold is None, backend uses the production config.
+        """
+        params = {}
+        if threshold is not None:
+            params['threshold'] = threshold
+
+        default = {
+            "metrics": {
+                "net_benefit": 0, "fraud_prevented": 0, "fraud_missed": 0,
+                "recall": 0, "auc": 0, "fp_ratio": 0
+            },
+            "meta": {"total": 0},
+            "config": {"source": "unknown", "threshold_used": 0.5}
+        }
+        
+        data = self._get("/performance", params=params)
+        return data if data else default

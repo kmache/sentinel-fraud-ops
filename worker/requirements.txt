@@ -1,2 +1,7 @@
 kafka-python
 redis
+pandas
+scikit-learn
+xgboost
+circuitbreaker
+lz4

@@ -338,12 +338,14 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
                 data_scaled = scaler.transform(data)
                 data_pca = pca.transform(data_scaled)
                 
+                pca_columns = {}
                 for i in range(data_pca.shape[1]):
-                    X[f'PCA_{group_name}_{i}'] = data_pca[:, i].astype(np.float32)
+                    pca_columns[f'PCA_{group_name}_{i}'] = data_pca[:, i].astype(np.float32)
+                pca_df = pd.DataFrame(pca_columns, index=X.index)
+                X = pd.concat([X, pca_df], axis=1)
                 
                 cols_to_drop.extend(valid_cols)
             except Exception as e:
-                # Fallback: if dims mismatch (drift), skip PCA for this group
                 if self.verbose: print(f"Warning: PCA skipped for {group_name} due to drift: {e}")
                 
         if cols_to_drop:
@@ -392,8 +394,9 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
             if col in df.columns:
                 df[col] = df[col].astype('category').cat.codes.astype('i4')
         
+        df = df.copy()
         if 'UID' in df.columns:
-            df['UID_hash'] = (df['UID'].apply(lambda x: hash(str(x)) % 10000)).astype('i4')
+            df['UID_hash'] = (df['UID'].astype(str).apply(hash) % 10000).astype('i4')
             
         return df
 

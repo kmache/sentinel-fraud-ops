@@ -106,17 +106,24 @@ class SentinelPreprocessing(BaseEstimator, TransformerMixin):
         for col in ['P_emaildomain', 'R_emaildomain']:
             if col in df.columns:
                 # 1. Cleaning
-                clean_val = df[col].astype(str).str.lower().replace(fix_map)
+                clean_val = df[col].fillna('nan').astype(str).str.lower().replace(fix_map)
+                lengths = clean_val.str.len()
+                lengths.loc[clean_val == 'nan'] = np.nan
                 
                 # 2. Extract Structure
-                df[f'{col}_length'] = clean_val.str.len().astype(np.int16)
+                df[f'{col}_length'] = lengths.astype('Int16')
+                
                 # Digits in email is a huge fraud signal
-                df[f'{col}_has_digits'] = clean_val.str.contains(r'\d', regex=True).astype(np.int8)
+                df[f'{col}_has_digits'] = clean_val.str.contains(r'\d', regex=True).astype(np.int8) 
                 df[f'{col}_is_free'] = clean_val.isin(free_domains).astype(np.int8)
                 
                 # 3. Parsing
-                temp_vendor = clean_val.str.split('.', n=1).str[0]
-                temp_suffix = clean_val.str.rsplit('.', n=1).str[-1]
+                temp_vendor = clean_val.astype(str).str.split('.', n=1).str[0]
+                temp_vendor = temp_vendor.replace('nan', np.nan)
+
+                temp_suffix = clean_val.astype(str).str.rsplit('.', n=1).str[-1]
+                temp_suffix = temp_suffix.replace('nan', np.nan) 
+                
                 group_col = temp_vendor.map(vendor_map).fillna('unknown')
                 
                 # 4. Encoding
@@ -359,24 +366,67 @@ class SentinelPreprocessing(BaseEstimator, TransformerMixin):
                     to_drop.append(col)
         return to_drop
 
+
     def _reduce_memory_usage(self, df: pd.DataFrame) -> pd.DataFrame:
         for col in df.columns:
-            col_type = df[col].dtype
-            
-            # Updated Check for Pandas 2.0 compatibility
-            if col_type != object and not isinstance(col_type, pd.CategoricalDtype):
-                c_min = df[col].min()
-                c_max = df[col].max()
-                if not pd.isna(c_min) and not pd.isna(c_max) and (df[col] % 1 == 0).all():
-                    if c_min >= 0:
-                        if c_max < 255: df[col] = df[col].astype(np.uint8)
-                        elif c_max < 4294967295: df[col] = df[col].astype(np.uint32)
-                    else:
-                        if c_min > -128 and c_max < 127: df[col] = df[col].astype(np.int8)
-                        elif c_min > -2147483648: df[col] = df[col].astype(np.int32)
-                else:
+            # 1. THE ROBUST CHECK: Only process numeric columns.
+            # This automatically skips 'object', 'string', 'category', and 'datetime'
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                continue
+
+            # 2. Double check: Skip if it's a Categorical type
+            if isinstance(df[col].dtype, pd.CategoricalDtype):
+                continue
+
+            c_min = df[col].min()
+            c_max = df[col].max()
+
+            # 3. Check for Nulls/Infinites before math
+            if pd.isna(c_min) or pd.isna(c_max):
+                # If numeric but has NaNs, we can still downcast to float32
+                if df[col].dtype != np.float32:
                     df[col] = df[col].astype(np.float32)
+                continue
+
+            # 4. Math check (Safe now because we know it's numeric)
+            if (df[col] % 1 == 0).all():
+                if c_min >= 0:
+                    if c_max < 255: df[col] = df[col].astype(np.uint8)
+                    elif c_max < 65535: df[col] = df[col].astype(np.uint16)
+                    elif c_max < 4294967295: df[col] = df[col].astype(np.uint32)
+                    else: df[col] = df[col].astype(np.uint64)
+                else:
+                    if c_min > -128 and c_max < 127: df[col] = df[col].astype(np.int8)
+                    elif c_min > -32768 and c_max < 32767: df[col] = df[col].astype(np.int16)
+                    elif c_min > -2147483648 and c_max < 2147483647: df[col] = df[col].astype(np.int32)
+                    else: df[col] = df[col].astype(np.int64)
+            else:
+                if df[col].dtype != np.float32:
+                    df[col] = df[col].astype(np.float32)
+                    
         return df
+    
+
+    # def _reduce_memory_usage(self, df: pd.DataFrame) -> pd.DataFrame:
+    #     for col in df.columns:
+    #         col_type = df[col].dtype
+            
+    #         # Updated Check for Pandas 2.0 compatibility
+    #         if col_type == object or col_type.name == 'category' or col_type.name == 'string':
+    #             continue
+    #         if col_type != object and not isinstance(col_type, pd.CategoricalDtype):
+    #             c_min = df[col].min()
+    #             c_max = df[col].max()
+    #             if not pd.isna(c_min) and not pd.isna(c_max) and (df[col] % 1 == 0).all():
+    #                 if c_min >= 0:
+    #                     if c_max < 255: df[col] = df[col].astype(np.uint8)
+    #                     elif c_max < 4294967295: df[col] = df[col].astype(np.uint32)
+    #                 else:
+    #                     if c_min > -128 and c_max < 127: df[col] = df[col].astype(np.int8)
+    #                     elif c_min > -2147483648: df[col] = df[col].astype(np.int32)
+    #             else:
+    #                 df[col] = df[col].astype(np.float32)
+    #     return df
 
 if __name__ == "__main__":
     print("Sentinel Preprocessing Module")

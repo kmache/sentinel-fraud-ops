@@ -1,20 +1,17 @@
-# Use python 3.10 slim
-FROM python:3.10-slim
+FROM python:3.11-slim
 
-# CRITICAL: Prevents Python from buffering stdout/stderr
-# Without this, you won't see "Sent MOCK..." logs in real-time
-ENV PYTHONUNBUFFERED=1
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Copy requirements
 COPY requirements.txt .
-RUN uv pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
-# Copy the producer script
-COPY . .
+COPY producer.py .
 
-# Data is mounted via volume in docker-compose, so we don't copy it here.
+RUN mkdir -p /app/data/raw
 
 CMD ["python", "producer.py"]

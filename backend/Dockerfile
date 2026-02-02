@@ -1,27 +1,31 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# 1. Install System Deps
-RUN apt update && apt install -y gcc curl libgomp1 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# 2. Install The Sentinel Library (src)
-# We copy setup.py and src first to cache this layer
-COPY setup.py .
-COPY src/ ./src/
-RUN pip install --no-cache-dir .
-
-# 3. Install Backend Dependencies
+# 1. Install Backend-specific requirements (FastAPI, etc.)
 COPY backend/requirements.txt .
-RUN uv pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
-# 4. Copy Backend Code
-COPY backend/ .
+# 2. Install the 'sentinel' package
+COPY pyproject.toml .
+COPY src/ src/
+RUN uv pip install --system --no-cache -e .
 
-# 5. Copy Production Models (Baked into image)
-COPY models/prod_v1 /app/models/prod_v1
+# 3. Copy Backend code
+COPY backend/main.py backend/schemas.py ./
 
-# 6. Run
+EXPOSE 8000
+
+# Run from the directory where main.py exists
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-

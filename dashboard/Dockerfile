@@ -1,45 +1,31 @@
-# Use Python 3.11 slim image
 FROM python:3.11-slim
 
-# Prevent Python from writing pyc files to disc
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 ENV PYTHONDONTWRITEBYTECODE=1
-# Prevent Python from buffering stdout/stderr (Crucial for Docker logs)
 ENV PYTHONUNBUFFERED=1
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-# build-essential: for compiling python packages
-# curl: for healthcheck
-# libgomp1: required for some ML libraries
+# Added libgomp1 and python3-dev for scipy/sklearn stability
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     libgomp1 \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
+RUN uv pip install --system --no-cache -r requirements.txt
 
-# Install Python dependencies
-RUN uv pip install --no-cache-dir -r requirements.txt
-
-# Copy application code (including app.py)
 COPY . .
 
-# Create non-root user for security
+# Non-root user for security
 RUN useradd -m -u 1000 streamlit && \
     chown -R streamlit:streamlit /app
-
 USER streamlit
 
-# Expose Streamlit port
 EXPOSE 8501
+HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
 
-# Health check (Streamlit specific endpoint)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl --fail http://localhost:8501/_stcore/health || exit 1
-
-# Run Streamlit pointing to app.py
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]

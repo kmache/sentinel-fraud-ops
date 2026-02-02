@@ -1,23 +1,31 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# 1. System Deps
-RUN apt-get update && apt-get install -y gcc libgomp1 && rm -rf /var/lib/apt/lists/*
+# Install system dependencies for ML (LightGBM/XGBoost need libgomp1)
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# 2. Install Sentinel Library
-COPY setup.py .
-COPY src/ ./src/
-RUN pip install --no-cache-dir .
-
-# 3. Install Worker Deps
+# 1. Install Worker-specific requirements (Kafka, Redis, etc.)
 COPY worker/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
-# 4. Copy Worker Code
-COPY worker/ .
+# 2. Install the 'sentinel' package from the root pyproject.toml
+# This makes 'import sentinel' work everywhere
+COPY pyproject.toml .
+COPY src/ src/
+RUN uv pip install --system --no-cache -e .
 
-# 5. Copy Model Bundle
-COPY models/prod_v1 /app/models/prod_v1
+# 3. Copy Worker script
+COPY worker/processor.py .
 
-CMD ["python", "processor_worker.py"]
+# Models are mounted via volume in docker-compose
+CMD ["python", "processor.py"]
