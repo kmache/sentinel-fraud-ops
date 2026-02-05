@@ -14,7 +14,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from styles import setup_page, COLORS
 from api_client import SentinelApiClient
-from pages import executive, ops, ml, strategy, forensics
+from views import executive, ops, ml, strategy, forensics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Dashboard")

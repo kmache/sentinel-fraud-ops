@@ -1,149 +1,94 @@
-"""
-ROLE: API Client (Adapter)
-RESPONSIBILITIES:
-1.  Abstracts HTTP requests to the Backend Service.
-2.  Handles connection errors and timeouts gracefully.
-3.  Converts raw JSON responses into Pandas DataFrames for Streamlit.
-4.  Provides fallback data structures to prevent UI crashes.
-"""
-import os
 import requests
 import logging
 import pandas as pd
-from typing import Dict, Any, Optional
-
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
-# Default to 'backend' service name in Docker Compose network
-API_BASE_URL = os.getenv("BACKEND_URL", "http://backend:8000")
-REQUEST_TIMEOUT = 3
+from typing import Dict, Any, Optional, List
+from config import BACKEND_URL, REQUEST_TIMEOUT, ENDPOINTS
 
 logger = logging.getLogger("ApiClient")
 
 class SentinelApiClient:
     """
-    Client for interacting with the Sentinel Fraud Ops Backend.
+    Thin Client: Fetches PRE-COMPUTED data from the Sentinel Fraud Backend.
+    No heavy calculations are performed here.
     """
 
     def __init__(self):
-        self.base_url = API_BASE_URL
+        self.base_url = BACKEND_URL
         self.session = requests.Session()
-        logger.info(f"🔌 API Client initialized pointing to: {self.base_url}")
+        logger.info(f"🔌 API Client linked to: {self.base_url}")
 
     def _get(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Any]:
-        """Internal helper to perform GET requests with error handling."""
+        """Internal helper for robust GET requests."""
         try:
             url = f"{self.base_url}{endpoint}"
             response = self.session.get(url, params=params, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
-        except requests.exceptions.ConnectionError:
-            # Suppress excessive logging for connection checks
-            if endpoint != "/health":
-                logger.error(f"❌ Connection Error: Could not reach {url}")
-            return None
-        except requests.exceptions.Timeout:
-            logger.warning(f"⏳ Timeout: Backend did not respond in {REQUEST_TIMEOUT}s")
-            return None
         except Exception as e:
-            logger.error(f"⚠️ API Error ({endpoint}): {e}")
+            # We don't log health check failures as 'Errors' to keep logs clean
+            if endpoint != ENDPOINTS["health"]:
+                logger.error(f"⚠️ API Fetch Failed ({endpoint}): {e}")
             return None
 
     # ==========================================================================
-    # SYSTEM HEALTH
+    # 1. SYSTEM HEALTH
     # ==========================================================================
     def is_backend_alive(self) -> bool:
-        """Checks if the backend is reachable and Redis is connected."""
-        data = self._get("/health")
+        """Returns True if the backend is reachable and healthy."""
+        data = self._get(ENDPOINTS["health"])
         return data is not None and data.get("status") == "healthy"
 
     def get_system_metrics(self) -> Dict[str, Any]:
-        """Fetches CPU and Memory usage of the backend service."""
-        default = {"memory_usage_mb": 0, "cpu_usage_percent": 0, "redis_connected": False}
-        data = self._get("/metrics")
-        return data if data else default
+        """Fetches pre-computed CPU/RAM load for the sidebar status."""
+        return self._get(ENDPOINTS["metrics"]) or {}
 
     # ==========================================================================
-    # DATA & STATISTICS
+    # 2. EXECUTIVE DATA (Pre-Computed)
     # ==========================================================================
-    def get_dashboard_stats(self) -> Dict[str, Any]:
+    def get_executive_stats(self) -> Dict[str, Any]:
         """
-        Fetches aggregated statistics (Fraud Rate, Total Count, etc.).
-        Returns zeroed-out dict on failure.
+        Fetches backend-calculated totals: Net Benefit, Fraud Prevented, etc.
+        Backend calculates these over the WHOLE database.
         """
-        default = {
-            "total_processed": 0,
-            "fraud_detected": 0,
-            "legit_transactions": 0,
-            "fraud_rate": 0.0,
-            "queue_depth": 0,
-            "updated_at": "N/A"
-        }
-        data = self._get("/stats")
-        return data if data else default
+        return self._get(ENDPOINTS["stats"]) or {}
 
-    def get_recent_transactions(self, limit: int = 20) -> pd.DataFrame:
+    def get_financial_timeseries(self) -> pd.DataFrame:
         """
-        Fetches the latest transactions stream.
-        Returns: Pandas DataFrame suitable for Streamlit display.
+        Fetches an array of points for the ROI line chart.
+        The backend has already calculated 'cumulative_savings' per hour/minute.
         """
-        data = self._get("/recent", params={"limit": limit})
-        
+        data = self._get("/executive/timeseries") # Custom endpoint for plot-ready data
         if not data:
             return pd.DataFrame()
+        return pd.DataFrame(data)
 
-        df = pd.DataFrame(data)
-        
-        # Data Formatting for UI
-        if not df.empty:
-            if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-            
-            # Reorder columns for readability if they exist
-            cols = ['timestamp', 'transaction_id', 'amount', 'score', 'is_fraud', 'action']
-            existing_cols = [c for c in cols if c in df.columns]
-            extra_cols = [c for c in df.columns if c not in cols]
-            df = df[existing_cols + extra_cols]
-
-        return df
-
-    def get_fraud_alerts(self, limit: int = 10) -> pd.DataFrame:
+    # ==========================================================================
+    # 3. OPERATION & ML DATA (Pre-Computed)
+    # ==========================================================================
+    def get_performance_report(self) -> Dict[str, Any]:
         """
-        Fetches only high-risk transactions (Fraud Alerts).
-        Returns: Pandas DataFrame.
+        Fetches pre-calculated PR-AUC, Drift scores, and Threshold data.
         """
-        data = self._get("/alerts", params={"limit": limit})
-        
+        return self._get(ENDPOINTS["performance"]) or {}
+
+    def get_model_curves(self) -> Dict[str, List[float]]:
+        """
+        Fetches pre-calculated X and Y coordinates for Precision-Recall curves.
+        Dashboard just draws the lines; no math involved.
+        """
+        return self._get("/ml/curves") or {"precision": [], "recall": [], "thresholds": []}
+
+    # ==========================================================================
+    # 4. RAW DATA (For Tables/Forensics Only)
+    # ==========================================================================
+    def get_transaction_stream(self, limit: int = 100) -> pd.DataFrame:
+        """
+        Fetches raw transactions for the Forensics table.
+        This is the only 'heavy' data, used exclusively for the search/table view.
+        """
+        data = self._get(ENDPOINTS["recent"], params={"limit": limit})
         if not data:
             return pd.DataFrame()
+        return pd.DataFrame(data)
 
-        df = pd.DataFrame(data)
-        if not df.empty and 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            
-        return df
-
-    # ==========================================================================
-    # MODEL PERFORMANCE & ROI
-    # ==========================================================================
-    def get_model_performance(self, threshold: Optional[float] = None) -> Dict[str, Any]:
-        """
-        Fetches ROI metrics, Recall, and AUC.
-        If threshold is None, backend uses the production config.
-        """
-        params = {}
-        if threshold is not None:
-            params['threshold'] = threshold
-
-        default = {
-            "metrics": {
-                "net_benefit": 0, "fraud_prevented": 0, "fraud_missed": 0,
-                "recall": 0, "auc": 0, "fp_ratio": 0
-            },
-            "meta": {"total": 0},
-            "config": {"source": "unknown", "threshold_used": 0.5}
-        }
         
-        data = self._get("/performance", params=params)
-        return data if data else default

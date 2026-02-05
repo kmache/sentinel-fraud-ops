@@ -4,8 +4,10 @@ RESPONSIBILITIES:
 1. Connects to Kafka (Consumer)
 2. Loads ML Models (SentinelInference)
 3. Consumes Raw Transactions in BATCHES
-4. Predicts Fraud (Vectorized)
-5. Saves Enriched Results to Redis (Pipelined & Circuit Broken)
+4. Predicts Fraud (Vectorized) - Fast Path
+5. Calculates SHAP (Threaded) - Async Path
+6. Saves Full JSON to 'sentinel_stream' (Capped at 1000)
+7. Saves Minimal Arrays to 'stats:hist_...' (Uncapped for ROI/AUC)
 """
 import os
 import sys
@@ -13,10 +15,11 @@ import json
 import logging
 import time
 import redis
+import threading
 import traceback
 from datetime import datetime
 from kafka import KafkaConsumer, KafkaProducer
-from kafka.errors import NoBrokersAvailable
+from kafka.errors import NoBrokersAvailable, CommitFailedError
 from circuitbreaker import circuit, CircuitBreakerError
 
 # Add src to path for shared library
@@ -101,9 +104,11 @@ except Exception as e:
     logger.warning(json.dumps({"event": "⚠️ kafka_producer_failed", "error": str(e)}))
 
 log_event("⏳ Loading Inference Engine ...")
+
 try:
     model_engine = SentinelInference(model_dir=MODEL_DIR)
-    log_event("Model Loaded", version=model_engine.config.get('selected_model', 'Unknown'))
+    redis_client.set('config:threshold', model_engine.config.get('threshold', 0.5))
+    log_event("Model Weights Loaded", version=model_engine.config.get('weights', 'Unknown'))
 except Exception as e:
     logger.critical(json.dumps({"event": "❌ model_load_failed", "error": str(e)}))
     sys.exit(1)
@@ -145,6 +150,35 @@ def send_to_dlq(raw_data_list, error_reason, exception=None):
         except Exception as e:
             logger.error(f"❌ Failed to write to DLQ: {e}")
 
+
+# ==============================================================================
+# 5. ASYNC SHAP ENRICHMENT
+# ==============================================================================
+def async_enrich_shap(ids, raw_data):
+    """
+    Background Thread: Calculates SHAP and updates Redis keys.
+    This runs parallel to the main Kafka loop.
+    """
+    try:
+        batch_explanations = model_engine.explain(raw_data, n=10)
+        
+        pipe = redis_client.pipeline()
+        
+        for i, tx_id in enumerate(ids):
+            key = f"prediction:{tx_id}"
+            
+            current_json = redis_client.get(key)
+            if current_json:
+                data = json.loads(current_json)
+                data['explanations'] = batch_explanations[i]
+                data['explanation_status'] = "ready"
+                pipe.setex(key, 3600, json.dumps(data))
+        
+        pipe.execute()
+            
+    except Exception as e:
+        logger.error(f"❌ Async SHAP Failed: {str(e)}")
+
 # ==============================================================================
 # 5. BATCH LOGIC WITH CIRCUIT BREAKER
 # ==============================================================================
@@ -158,10 +192,11 @@ def execute_redis_pipeline(pipe):
 
 def flush_batch(messages):
     if not messages: return
+
     raw_data = [m.value for m in messages]
+    
     try:
         results = model_engine.predict(raw_data)
-        
     except Exception as e:
         log_event("Inference Batch Failed", error=str(e))
         logger.error("❌ CRITICAL INFERENCE ERROR:")
@@ -169,46 +204,97 @@ def flush_batch(messages):
         send_to_dlq(raw_data, "inference_batch_error", e)
         return
 
+    TS_MIN_INTERVAL = 10 
+    TS_VALUE_DELTA = 500.0 
     # --- 2. PREPARE PIPELINE ---
     ids = results['transaction_id']
-    probs = results.get('probabilities', [])
-    is_frauds = results.get('is_frauds', [])
-    actions = results.get('actions', [])
-    y_trues = results.get('y_true', [])
+    probs = results['probabilities']
+    is_frauds = results['is_frauds'] # Predict as Fraud by the model 
+    actions = results['actions']
+    y_trues = results['y_true']
+    dashboard_records = results['dashboard_data']
+    weights = results.get("meta", {}).get("weights", {})
 
-    amounts = [d.get('TransactionAmt', 0.0) for d in raw_data]
-    timestamps = [d.get('timestamp', datetime.now().replace(microsecond=0).isoformat()) for d in raw_data]
-
-    pipe = redis_client.pipeline()
-    count_fraud = 0
-    count_legit = 0
+    batch_savings_delta = 0.0
+    batch_loss_delta = 0.0
 
     for i in range(len(ids)):
-        payload = {
-            "transaction_id": ids[i],
-            "timestamp": timestamps[i],
-            "score": probs[i],
-            "is_fraud": int(is_frauds[i]),
-            "action": actions[i],
-            "ground_truth": int(y_trues[i]),
-            "amount": amounts[i],
-            "ProductCD": raw_data[i].get("ProductCD", "U"),
-            "dist1": raw_data[i].get("dist1", 0),
-            "addr1": raw_data[i].get("addr1", 0),
-            "C1": raw_data[i].get("C1", 0),
-            "C13": raw_data[i].get("C13", 0),
-            "C14": raw_data[i].get("C14", 0),
-            "UID_velocity_24h": raw_data[i].get("UID_velocity_24h", 0),
-            "card_email_combo_fraud_rate": raw_data[i].get("card_email_combo_fraud_rate", 0),
-            "P_emaildomain": raw_data[i].get("P_emaildomain", ""),
-            "device_vendor": raw_data[i].get("device_vendor", ""),
-            "D15": raw_data[i].get("D15", 0)
+        amt = float(dashboard_records[i].get('TransactionAmt', 0.0))
+        truth = int(y_trues[i])
+        decision = int(is_frauds[i]) # 1 = Blocked, 0 = Allowed
+        if truth == 1:
+            if decision == 1:
+                batch_savings_delta += amt
+            else:
+                batch_loss_delta += amt
+
+    pipe = redis_client.pipeline()
+    pipe.incrbyfloat('stats:global_savings', batch_savings_delta)
+    pipe.incrbyfloat('stats:global_loss', batch_loss_delta)
+
+    new_totals = pipe.execute() 
+    current_total_saved = float(new_totals[0])
+    current_total_loss = float(new_totals[1])
+
+    global _LAST_TS_WRITE_TIME, _LAST_SAVED_VALUE
+    _LAST_TS_WRITE_TIME = 0
+    _LAST_SAVED_VALUE = -1.0
+    now = time.time()
+    should_write = False
+
+    if (now - _LAST_TS_WRITE_TIME) >= TS_MIN_INTERVAL:
+        should_write = True
+
+    elif abs(current_total_saved - _LAST_SAVED_VALUE) >= TS_VALUE_DELTA:
+        should_write = True
+
+    if should_write:
+        ts_point = {
+            "timestamp": datetime.now().isoformat(),
+            "cumulative_savings": current_total_saved,
+            "cumulative_loss": current_total_loss
         }
+        pipe = redis_client.pipeline()
+        pipe.rpush('sentinel_timeseries', json.dumps(ts_point))
+
+        _LAST_TS_WRITE_TIME = now
+        _LAST_SAVED_VALUE = current_total_saved
+        pipe.ltrim('sentinel_timeseries', -100000, -1) 
+        pipe.execute()
+
+        _LAST_TS_WRITE_TIME = now
+        _LAST_SAVED_VALUE = current_total_saved 
+
+    count_fraud = 0
+    count_legit = 0
+    for i in range(len(ids)):
+        score = float(probs[i])
+        amt = float(dashboard_records[i].get('TransactionAmt', 0.0)) 
+        truth = int(y_trues[i])
+
+        payload = dashboard_records[i]
+        payload.update({
+            "transaction_id": ids[i],
+            "score": score,
+            "is_fraud": int(is_frauds[i]),
+            "ground_truth": truth,
+            "y_true": truth,
+            "action": actions[i],
+            "model_weights": weights,
+            "timestamp": datetime.now().isoformat(),
+            "explanation_status": "processing",
+            "explanations": []
+        })
+        
         payload_json = json.dumps(payload)
         
         # Redis Commands
         pipe.lpush('sentinel_stream', payload_json)
         pipe.setex(f"prediction:{ids[i]}", 3600, payload_json)
+
+        pipe.rpush('stats:hist_y_prob', score)
+        pipe.rpush('stats:hist_y_true', truth)
+        pipe.rpush('stats:hist_amounts', amt)
         
         if payload['is_fraud'] == 1:
             count_fraud += 1
@@ -216,8 +302,6 @@ def flush_batch(messages):
             pipe.ltrim('sentinel_alerts', 0, 99)
         else:
             count_legit += 1
-
-        # Kafka Send (Output)
         if kafka_producer:
             kafka_producer.send(OUTPUT_TOPIC, value=payload)
 
@@ -229,6 +313,11 @@ def flush_batch(messages):
     # --- 3. EXECUTE PIPELINE (Circuit Protected) ---
     try:
         execute_redis_pipeline(pipe)
+        if len(ids) > 0:
+            t = threading.Thread(target=async_enrich_shap, args=(ids, raw_data))
+            t.daemon = True
+            t.start()
+
         if count_fraud > 0:
             log_event("Batch Processed", size=len(ids), frauds=count_fraud)
     
@@ -248,17 +337,24 @@ def run():
     log_event("System Started", role="Worker/Brain", topic=INPUT_TOPIC, mode="BATCH")
     batch = []
     last_flush_time = time.time()
+
     try:
         for message in consumer:
             batch.append(message)
+
             if len(batch) >= BATCH_SIZE or (time.time() - last_flush_time) >= BATCH_TIMEOUT:
                 flush_batch(batch)
+                
                 try:
                     consumer.commit()
+                except CommitFailedError:
+                    logger.warning("⚠️ Commit Failed: Rebalance in progress")
                 except Exception as e:
-                    log_event("Offset Commit Failed", error=str(e))
+                    log_event("Offset Commit Failed: Rebalancing in progress", error=str(e))
+                
                 batch = []
                 last_flush_time = time.time()
+
     except KeyboardInterrupt:
         logger.info("🛑 Shutdown requested...")
     except Exception as e:

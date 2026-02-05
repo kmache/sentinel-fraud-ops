@@ -108,7 +108,7 @@ class SentinelEvaluator:
             (self.y_prob >= soft_threshold) & (self.y_prob < hard_threshold),
             self.y_prob >= hard_threshold
         ]
-        choices = ['APPROVE', 'CHALLENGE', 'BLOCK']
+        choices = ['APPROVE', 'REVIEW', 'BLOCK']
         
         # Default to BLOCK if edge cases arise
         return np.select(conditions, choices, default='BLOCK')
@@ -147,7 +147,8 @@ class SentinelEvaluator:
                 "precision": float(round(tp / (tp + fp + 1e-6), 4)),
                 "recall": float(round(tp / (tp + fn + 1e-6), 4)),
                 "fpr_insult_rate": float(round(fp / (fp + tn + 1e-6), 4)),
-                "auc": float(round(self.get_auc(), 4))
+                "auc": float(round(self.get_auc(), 4)),
+                "fraud_rate": float(round(100*np.array(self.y_true).sum()/len(self.y_true), 2))
             },
             "financials": {
                 "fraud_stopped_val": float(round(fraud_caught_amt, 2)),

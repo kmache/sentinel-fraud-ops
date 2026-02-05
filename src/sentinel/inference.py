@@ -1,20 +1,14 @@
 import joblib
 import json
-from matplotlib.widgets import EllipseSelector
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, Union, Any, List, Optional
+from typing import Dict, Union, Any, List
 import logging
 import time
-import sklearn
 from datetime import datetime
 import xgboost as xgb
-import sklearn
-import pandas
-print(f"XGBoost version: {xgb.__version__}")
-print(f"Scikit-learn version: {sklearn.__version__}")
-print(f"Pandas version: {pandas.__version__}")
+
 # Setup basic logging (In production, this might go to Datadog/Splunk)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("SentinelInference")
@@ -28,7 +22,6 @@ class SentinelInference:
     2. Robustness: explicit categorical casting and schema validation.
     3. Business Logic: Returns Tiered Decisions (Approve, Challenge, Block).
     """
-
     def __init__(self, model_dir: str):
         """
         Args:
@@ -38,7 +31,6 @@ class SentinelInference:
         self.models = {}
         self.features = {}
         self.config = {}
-        self.cat_features = []
         self._load_artifacts()
 
     def _load_artifacts(self):
@@ -57,14 +49,9 @@ class SentinelInference:
             
             self.preprocessor = joblib.load(self.model_dir / 'sentinel_preprocessor.pkl')
             self.engineer = joblib.load(self.model_dir / 'sentinel_engineer.pkl')
-            
-            cat_path = self.model_dir / 'categorical_features.json'
-            if cat_path.exists():
-                with open(cat_path, 'r') as f: self.cat_features = json.load(f)
-            else:
-                logger.warning("categorical_features.json not found. Auto-detection might fail.")
 
             # Config example: {"weights": {"lgb": 0.7, "xgb": 0.3}, ...}
+            
             weights = self.config.get("weights", {})
             for model_name in weights.keys():
                 model_path = self.model_dir / f"{model_name}_model.pkl" 
@@ -93,10 +80,113 @@ class SentinelInference:
                             Anything above config['threshold'] is a 'Block'.
         
         Returns:
-            Dict with probability, action (APPROVE/CHALLENGE/BLOCK), and metadata.
+            Dict with probability, action (APPROVE/REVIEW/BLOCK), and metadata.
         """
         start_time = time.time()
+        df = self._to_df(data)
+        df = self._type_consistency(df)
+
+        try:
+            df_clean = self.preprocessor.transform(df)
+            df_features = self.engineer.transform(df_clean)
+
+            probs = np.zeros(len(df))
+            weights = self.config['weights']
+
+            for name, weight in weights.items():
+
+                model_cols = self.features[name]
+                missing = list(set(model_cols) - set(df_features.columns.tolist()))
+                if missing:
+                    for c in missing: df_features[c] = np.nan
+
+                tem_df = df_features[model_cols].copy()
+                 
+                if name=='xgb':
+                    dmatrix = xgb.DMatrix(tem_df, feature_names=model_cols, enable_categorical=True)
+                    p = self.models[name].predict(dmatrix)
+                else:
+                    p = self.models[name].predict_proba(tem_df)[:, 1]
+                probs += (p * weight)
+                
+        except Exception as e:
+            logger.error(f"Prediction Error: {e}")
+            raise RuntimeError(f"Inference pipeline failed: {str(e)}")
+
+        hard_threshold = self.config['threshold']
+
+        actions = [self._get_action(p, soft_threshold, hard_threshold) for p in probs.tolist()]
+        isfrauds = [1 if p >= hard_threshold else 0 for p in probs.tolist()]
+        fraud_probs = [round(p, 4) for p in probs.tolist()] 
+
+        tnx_ids = df['TransactionID'].astype(str).tolist()
+        y_true = df['isFraud'].tolist() if 'isFraud' in df.columns else [0]*len(df)
         
+        data4dashboard = self._extract_data_for_dashboard(df, df_features)
+
+        report = {
+            "transaction_id": tnx_ids, 
+            "probabilities": fraud_probs, 
+            "is_frauds": isfrauds, 
+            "y_true": y_true, 
+            "actions": actions,
+            "dashboard_data": data4dashboard,
+            "meta": {
+                "model_weights": weights,
+                "threshold": hard_threshold,
+                "timestamp": datetime.now().replace(microsecond=0).isoformat(), 
+                "latency_ms": int((time.time() - start_time) * 1000)
+            }
+        }
+        return report
+
+
+    def explain(self, data, model_name='xgb', n=10):
+        """
+        Calculates SHAP values using Native XGBoost (Fastest Method).
+        """
+        if model_name != 'xgb':
+            raise ValueError("Only 'xgb' supported for SHAP at this time.")
+
+        # Re-run engineering (Necessary as this runs in a separate thread usually)
+        df = self._to_df(data)
+        df = self._type_consistency(df)
+        df_clean = self.preprocessor.transform(df)
+        df_features = self.engineer.transform(df_clean)
+        
+        feature_names = self.features[model_name]
+        
+        # Ensure columns exist
+        missing = list(set(feature_names) - set(df_features.columns.tolist()))
+        if missing:
+            for c in missing: df_features[c] = np.nan
+            
+        temp_df = df_features[feature_names]
+        dmat = xgb.DMatrix(temp_df, enable_categorical=True)
+        shap_matrix = self.models[model_name].get_booster().predict(dmat, pred_contribs=True)
+        
+        batch_explanations = []
+        
+        for i in range(len(temp_df)):
+            feature_impacts = shap_matrix[i][:-1]
+            raw_values = temp_df.iloc[i].values
+            
+            impacts_list = []
+            for name, val, impact in zip(feature_names, raw_values, feature_impacts):
+                if abs(impact) > 1e-4:
+                    impacts_list.append({
+                        "feature": name,
+                        "value": str(val),
+                        "impact": float(impact)
+                    })
+            
+            top_n = sorted(impacts_list, key=lambda x: abs(x['impact']), reverse=True)[:n]
+            batch_explanations.append(top_n)
+
+        return batch_explanations
+
+
+    def _to_df(self, data):
         if isinstance(data, dict): 
             df = pd.DataFrame([data])
         elif isinstance(data, list):
@@ -106,57 +196,7 @@ class SentinelInference:
         else: 
             raise TypeError("data must be a dict, list of dicts, or pandas DataFrame")
         df = df.replace({None: np.nan})
-        
-        df = self._type_consistency(df)
-
-        if 'TransactionID' not in df.columns:
-            print('warning: no TransactionID column found, generating one...') 
-            df['TransactionID'] = f"tx_{int(time.time() * 1000)}"
-
-        try:
-            df_clean = self.preprocessor.transform(df)
-            df_features = self.engineer.transform(df_clean)
-            probs = np.zeros(len(df))
-            weights = self.config['weights']
-
-            for name, weight in weights.items():
-                df_features = self._features_consistency(df_features, name)
-
-                tem_df = df_features[self.features[name]].copy()
-                
-                if name=='xgb':
-                    booster = self.models[name].get_booster()
-                    dmatrix = xgb.DMatrix(
-                        tem_df.values,
-                        feature_names=self.features[name],
-                        enable_categorical=True
-                    )
-                    p =  booster.predict(dmatrix)
-                else:
-                    p = self.models[name].predict_proba(tem_df)[:, 1]
-                probs += (p * weight)
-
-        except Exception as e:
-            logger.error(f"Prediction Error: {e}")
-            raise RuntimeError(f"Inference pipeline failed: {str(e)}")
-
-        hard_threshold = self.config['threshold']
-
-        actions = [self._get_action(p, soft_threshold, hard_threshold) for p in probs.tolist()]
-        isfrauds = [1 if p >= hard_threshold else 0 for p in probs.tolist()]
-        y_true = df['isFraud'].values.tolist() if 'isFraud' in df.columns else [0]*len(df)
-        tnx_ids = df['TransactionID'].values.tolist()
-        fraud_probs = [round(p, 4) for p in probs.tolist()]
-
-        report = {
-            "transaction_id": tnx_ids, "probabilities": fraud_probs, "is_frauds": isfrauds, "y_true": y_true, "actions": actions,
-            "meta": {
-                "threshold": hard_threshold,
-                "timestamp": datetime.now().replace(microsecond=0).isoformat(), 
-                "latency_ms": int((time.time() - start_time) * 1000)
-            }
-        }
-        return report
+        return df
 
     def _get_features(self, model, model_type):
         if model_type == 'xgb':
@@ -167,19 +207,7 @@ class SentinelInference:
             features = model.feature_name_ 
         else:
             raise ValueError("Unsupported model type")
-        return features
-
-    def _features_consistency(self, data: pd.DataFrame, model_name: str) -> pd.DataFrame:
-        """
-        Ensure consistent feature types for inference.
-        """
-        df = data.copy()
-        missing_features = list(set(self.features[model_name]) - set(df.columns.tolist()))
-        if missing_features:
-            missing_data = {col: np.nan for col in missing_features}
-            missing_df = pd.DataFrame(missing_data, index=df.index)
-            df = pd.concat([df, missing_df], axis=1)
-        return df
+        return list(features)
 
     def _type_consistency(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -206,11 +234,35 @@ class SentinelInference:
 
         return df
 
+    def _extract_data_for_dashboard(self, data: pd.DataFrame, df_features: pd.DataFrame) -> List[Dict[str, Any]]:
+        """
+        Extract data for dashboard.
+        """
+        DASHBOARD_FEATURES = [
+            'P_emaildomain', 'TransactionAmt', 'ProductCD','TransactionAmt_log', 'TransactionAmt_suspicious', 'cents_value',
+            'country', 'composite_risk_score', 'DeviceType', 'os_browser_combo', 
+            'UID_velocity_1h', 'UID_velocity_12h', 'UID_velocity_24h',
+            'multi_entity_sharing', 'card_email_combo', 'device_info_combo', 
+            'P_emaildomain_risk_score', 'email_match_status', 'P_emaildomain_is_free',
+            'ProductCD_switch', 'user_amt_zscore', 'Amt_div_card1_mean', 
+            'hour_of_day', 'day_of_week', 'time_gap_anomaly',
+            'screen_area', 'addr1_fraud_rate', 'addr1_degree'
+        ]
+
+        orinigal_cols = [c for c in data.columns if c in DASHBOARD_FEATURES]
+        feature_cols = [col for col in DASHBOARD_FEATURES if col not in orinigal_cols]
+
+        export_df = data[orinigal_cols].copy()
+        eng_df = df_features[feature_cols].copy()
+        dash_df = pd.concat([export_df, eng_df], axis=1)
+        records = dash_df.replace({np.nan: None}).to_dict('records')
+
+        return records
+
     def _get_action(self, prob: float, soft: float, hard: float) -> str:
-        if prob >= hard: return "BLOCK"
+        if prob >= hard: return "BLOCK" 
         elif prob >= soft: return "REVIEW"
         return "APPROVE" 
-
 
 if __name__ == "__main__":
     print("Sentinel Inference Module Loaded")
