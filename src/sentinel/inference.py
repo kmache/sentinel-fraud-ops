@@ -22,7 +22,7 @@ class SentinelInference:
     2. Robustness: explicit categorical casting and schema validation.
     3. Business Logic: Returns Tiered Decisions (Approve, Challenge, Block).
     """
-    def __init__(self, model_dir: str):
+    def __init__(self, model_dir: str, verbose:bool=True):
         """
         Args:
             model_dir (str): Path to the folder containing the model artifacts.
@@ -32,6 +32,8 @@ class SentinelInference:
         self.features = {}
         self.config = {}
         self._load_artifacts()
+
+        self.verbose = verbose
 
     def _load_artifacts(self):
         """Loads configuration, processors, and model binaries."""
@@ -51,7 +53,6 @@ class SentinelInference:
             self.engineer = joblib.load(self.model_dir / 'sentinel_engineer.pkl')
 
             # Config example: {"weights": {"lgb": 0.7, "xgb": 0.3}, ...}
-            
             weights = self.config.get("weights", {})
             for model_name in weights.keys():
                 model_path = self.model_dir / f"{model_name}_model.pkl" 
@@ -87,13 +88,13 @@ class SentinelInference:
         df = self._type_consistency(df)
 
         try:
-            df_clean = self.preprocessor.transform(df)
-            df_features = self.engineer.transform(df_clean)
+            df_clean = self.preprocessor.transform(df, verbose=self.verbose)
+            df_features = self.engineer.transform(df_clean, verbose=self.verbose)
 
             probs = np.zeros(len(df))
             weights = self.config['weights']
 
-            for name, weight in weights.items():
+            for name, weight in weights.items(): 
 
                 model_cols = self.features[name]
                 missing = list(set(model_cols) - set(df_features.columns.tolist()))
@@ -104,7 +105,7 @@ class SentinelInference:
                  
                 if name=='xgb':
                     dmatrix = xgb.DMatrix(tem_df, feature_names=model_cols, enable_categorical=True)
-                    p = self.models[name].predict(dmatrix)
+                    p = self.models[name].get_booster().predict(dmatrix)
                 else:
                     p = self.models[name].predict_proba(tem_df)[:, 1]
                 probs += (p * weight)
@@ -151,8 +152,8 @@ class SentinelInference:
         # Re-run engineering (Necessary as this runs in a separate thread usually)
         df = self._to_df(data)
         df = self._type_consistency(df)
-        df_clean = self.preprocessor.transform(df)
-        df_features = self.engineer.transform(df_clean)
+        df_clean = self.preprocessor.transform(df, verbose=self.verbose)
+        df_features = self.engineer.transform(df_clean, verbose=self.verbose)
         
         feature_names = self.features[model_name]
         
@@ -161,9 +162,9 @@ class SentinelInference:
         if missing:
             for c in missing: df_features[c] = np.nan
             
-        temp_df = df_features[feature_names]
-        dmat = xgb.DMatrix(temp_df, enable_categorical=True)
-        shap_matrix = self.models[model_name].get_booster().predict(dmat, pred_contribs=True)
+        temp_df = df_features[feature_names].copy()
+        dmatrix = xgb.DMatrix(temp_df, feature_names=feature_names, enable_categorical=True)
+        shap_matrix = self.models[model_name].get_booster().predict(dmatrix, pred_contribs=True)
         
         batch_explanations = []
         
@@ -177,7 +178,7 @@ class SentinelInference:
                     impacts_list.append({
                         "feature": name,
                         "value": str(val),
-                        "impact": float(impact)
+                        "impact": round(float(impact), 4)
                     })
             
             top_n = sorted(impacts_list, key=lambda x: abs(x['impact']), reverse=True)[:n]
@@ -234,7 +235,7 @@ class SentinelInference:
 
         return df
 
-    def _extract_data_for_dashboard(self, data: pd.DataFrame, df_features: pd.DataFrame) -> List[Dict[str, Any]]:
+    def _extract_data_for_dashboard(self, data_original: pd.DataFrame, df_features: pd.DataFrame) -> List[Dict[str, Any]]:
         """
         Extract data for dashboard.
         """
@@ -249,12 +250,18 @@ class SentinelInference:
             'screen_area', 'addr1_fraud_rate', 'addr1_degree'
         ]
 
-        orinigal_cols = [c for c in data.columns if c in DASHBOARD_FEATURES]
+        orinigal_cols = [c for c in data_original.columns if c in DASHBOARD_FEATURES]
         feature_cols = [col for col in DASHBOARD_FEATURES if col not in orinigal_cols]
 
-        export_df = data[orinigal_cols].copy()
+        missing_cols = [c for c in DASHBOARD_FEATURES if c not in data_original.columns and c not in df_features.columns]
+        
+        for col in missing_cols:
+            df_features[col] = np.nan
+
+        export_df = data_original[orinigal_cols].copy()
         eng_df = df_features[feature_cols].copy()
         dash_df = pd.concat([export_df, eng_df], axis=1)
+
         records = dash_df.replace({np.nan: None}).to_dict('records')
 
         return records

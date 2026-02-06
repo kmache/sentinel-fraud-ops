@@ -11,6 +11,8 @@ from sentinel.evaluation import SentinelEvaluator
 
 # Config
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
+REDIS_PORT = os.getenv('REDIS_PORT', '6379')
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
 REFRESH_INTERVAL = 60 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -18,7 +20,12 @@ logger = logging.getLogger("GlobalMetrics")
 
 class GlobalMetricsWorker:
     def __init__(self):
-        self.r = redis.Redis(host=REDIS_HOST, decode_responses=True)
+        self.r = redis.Redis(
+            host=REDIS_HOST,
+            port=int(REDIS_PORT),
+            password=REDIS_PASSWORD,
+            decode_responses=True
+        )
         self.y_prob = []
         self.y_true = []
         self.amounts = []
@@ -57,6 +64,7 @@ class GlobalMetricsWorker:
                     evaluator = SentinelEvaluator(self.y_true, self.y_prob, self.amounts)
                     full_report = evaluator.report_business_impact(threshold=current_threshold)
                     
+                    full_report['counts']['queue_depth'] = self.r.llen('sentinel_stream')
                     full_report['meta'] = {
                         "total_lifetime_count": len(self.y_true),
                         "updated_at": datetime.now().replace(microsecond=0).isoformat(),

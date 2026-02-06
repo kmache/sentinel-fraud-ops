@@ -133,38 +133,49 @@ def get_metrics():
         "redis_connected": redis_status,
     }
 
+
 @app.get("/stats", response_model=StatsResponse, tags=["Dashboard"])
 def get_stat_performance_report():
     try: 
         raw_data = redis_client.get('stats:stat_bussiness_report')
         if not raw_data:
-            raise HTTPException(status_code=404, detail="Stats not yet computed")
+            raise HTTPException(status_code=404, detail="Stats not available")
         
-        # CRITICAL FIX: Load the JSON string into a dict
+        # Load the string from Redis into a dictionary
         data = json.loads(raw_data)
         
-        # Mapping with safe .get() defaults
-        counts = data.get('counts', {})
-        finance = data.get('financials', {})
+        # Extract the nested blocks provided by evaluator.report_business_impact
         perf = data.get('performance', {})
+        finance = data.get('financials', {})
+        counts = data.get('counts', {})
+        meta = data.get('meta', {})
 
+        # Flatten the data to match StatsResponse
         return {
+            # 1. Performance
             "precision": perf.get('precision', 0),
             "recall": perf.get('recall', 0),
             "fpr_insult_rate": perf.get('fpr_insult_rate', 0),
             "auc": perf.get('auc', 0),
             "fraud_rate": perf.get('fraud_rate', 0),
+
+            # 2. Financials
             "fraud_stopped_val": finance.get('fraud_stopped_val', 0),
             "fraud_missed_val": finance.get('fraud_missed_val', 0),
             "false_positive_loss": finance.get('false_positive_loss', 0),
             "net_savings": finance.get('net_savings', 0),
-            "total_eval": counts.get('total_eval', 0),
-            "treshold": data.get('meta', {}).get('threshold', 0.5)
+
+            # 3. Counts & Metadata
+            "total_processed": counts.get('total_processed', 0),
+            "threshold": meta.get('threshold', 0.5), 
+            "queue_depth": counts.get('queue_depth', 0), 
+            "updated_at": meta.get('updated_at', ""),
         }
-    except HTTPException: raise
+
     except Exception as e:
-        logger.error(f"Stats Error: {e}")
-        raise HTTPException(status_code=500, detail="Internal data error")
+        logger.error(f"Stats Report Mapping Error: {e}")
+        # Providing a 500 detail helps you debug if a key is missing in Redis
+        raise HTTPException(status_code=500, detail=f"Data mapping error: {str(e)}")
 
 
 @app.get("/exec/series", tags=["Dashboard"])

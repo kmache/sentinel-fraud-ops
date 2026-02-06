@@ -157,7 +157,7 @@ class SentinelEvaluator:
                 "net_savings": float(round(net_savings, 2)) 
             },
             "counts": {
-                "total_eval": int(len(self.y_true)),
+                "total_processed": int(len(self.y_true)),
                 "tp_count": int(tp),
                 "fp_count": int(fp),
                 "fn_count": int(fn)

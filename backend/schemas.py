@@ -1,10 +1,12 @@
 from typing import Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class Transaction(BaseModel):
     transaction_id: Any
     timestamp: str
-    amount: float
+    
+    amount: float = Field(alias="TransactionAmt") 
+    
     is_fraud: int
     score: float
     action: str
@@ -16,11 +18,21 @@ class Transaction(BaseModel):
     
     class Config:
         extra = "allow"
+        populate_by_name = True
 
 class StatsResponse(BaseModel):
-    total_processed: int
-    fraud_detected: int
-    legit_transactions: int
+    precision: float
+    recall: float
+    fpr_insult_rate: float
+    auc: float
     fraud_rate: float
+
+    fraud_stopped_val: float
+    fraud_missed_val: float
+    false_positive_loss: float
+    net_savings: float
+
+    total_processed: int
+    threshold: float
     queue_depth: int
     updated_at: str
