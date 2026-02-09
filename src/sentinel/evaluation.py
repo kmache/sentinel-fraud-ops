@@ -97,6 +97,38 @@ class SentinelEvaluator:
         
         return 0.5
             
+    
+    def get_cost_curve(self, cost_params: dict = None):
+        """
+        Returns a JSON-serializable list of dicts for the threshold-loss plot.
+        """
+        # Default values if none provided
+        params = cost_params or {
+            'cb_fee': 25.0, 
+            'support_cost': 15.0, 
+            'churn_factor': 0.1
+        }
+        
+        curve = []
+        # 50 points is the standard for a smooth UI curve without heavy CPU usage
+        candidates = np.linspace(0.01, 0.99, 50) 
+        
+        for t in candidates:
+            preds = (self.y_prob >= t).astype(int)
+            fn_mask = (self.y_true == 1) & (preds == 0)
+            fp_mask = (self.y_true == 0) & (preds == 1)
+            
+            # Calculate Costs
+            fn_loss = self.amounts[fn_mask].sum() + (fn_mask.sum() * params['cb_fee'])
+            fp_loss = (fp_mask.sum() * params['support_cost']) + \
+                    (self.amounts[fp_mask].sum() * params['churn_factor'])
+            
+            curve.append({
+                "threshold": round(float(t), 3),
+                "total_loss": round(float(fn_loss + fp_loss), 2)
+            })
+            
+        return curve
 
     def get_tiered_strategy(self, soft_threshold: float, hard_threshold: float) -> np.ndarray:
         """

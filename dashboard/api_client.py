@@ -2,93 +2,133 @@ import requests
 import logging
 import pandas as pd
 from typing import Dict, Any, Optional, List
-from config import BACKEND_URL, REQUEST_TIMEOUT, ENDPOINTS
+from config import Endpoints, REQUEST_TIMEOUT
 
+# Initialize Logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ApiClient")
 
-class SentinelApiClient:
+class SentinelClient:
     """
-    Thin Client: Fetches PRE-COMPUTED data from the Sentinel Fraud Backend.
-    No heavy calculations are performed here.
+    The Bridge: Fetches data from the Sentinel Backend (FastAPI).
+    converts JSON responses into Pandas DataFrames where appropriate.
     """
 
     def __init__(self):
-        self.base_url = BACKEND_URL
         self.session = requests.Session()
-        logger.info(f"🔌 API Client linked to: {self.base_url}")
+        logger.info(f"🔌 Sentinel Client Initialized")
 
-    def _get(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Any]:
+    def _get(self, url: str, params: Optional[Dict] = None) -> Optional[Any]:
         """Internal helper for robust GET requests."""
         try:
-            url = f"{self.base_url}{endpoint}"
             response = self.session.get(url, params=params, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"⚠️ Connection Refused: {url}")
+            return None
         except Exception as e:
-            # We don't log health check failures as 'Errors' to keep logs clean
-            if endpoint != ENDPOINTS["health"]:
-                logger.error(f"⚠️ API Fetch Failed ({endpoint}): {e}")
+            logger.error(f"❌ API Error ({url}): {e}")
             return None
 
     # ==========================================================================
     # 1. SYSTEM HEALTH
     # ==========================================================================
-    def is_backend_alive(self) -> bool:
-        """Returns True if the backend is reachable and healthy."""
-        data = self._get(ENDPOINTS["health"])
+    def get_system_health(self) -> bool:
+        """Checks if Backend + Redis are alive."""
+        url = Endpoints.build_url(Endpoints.HEALTH)
+        data = self._get(url)
         return data is not None and data.get("status") == "healthy"
 
     def get_system_metrics(self) -> Dict[str, Any]:
-        """Fetches pre-computed CPU/RAM load for the sidebar status."""
-        return self._get(ENDPOINTS["metrics"]) or {}
+        """Fetches CPU/RAM usage."""
+        url = Endpoints.build_url(Endpoints.SYSTEM_METRICS)
+        return self._get(url) or {}
 
     # ==========================================================================
-    # 2. EXECUTIVE DATA (Pre-Computed)
+    # 2. EXECUTIVE DASHBOARD (KPIs & Charts)
     # ==========================================================================
-    def get_executive_stats(self) -> Dict[str, Any]:
+    def get_dashboard_stats(self) -> Dict[str, Any]:
         """
-        Fetches backend-calculated totals: Net Benefit, Fraud Prevented, etc.
-        Backend calculates these over the WHOLE database.
+        Fetches the Business Report (KPI Cards).
+        Endpoint: /stats
         """
-        return self._get(ENDPOINTS["stats"]) or {}
+        url = Endpoints.build_url(Endpoints.STATS)
+        return self._get(url) or {}
 
     def get_financial_timeseries(self) -> pd.DataFrame:
         """
-        Fetches an array of points for the ROI line chart.
-        The backend has already calculated 'cumulative_savings' per hour/minute.
+        Fetches data for the 'Savings over Time' chart.
+        Endpoint: /exec/series
         """
-        data = self._get("/executive/timeseries") # Custom endpoint for plot-ready data
-        if not data:
-            return pd.DataFrame()
-        return pd.DataFrame(data)
-
-    # ==========================================================================
-    # 3. OPERATION & ML DATA (Pre-Computed)
-    # ==========================================================================
-    def get_performance_report(self) -> Dict[str, Any]:
-        """
-        Fetches pre-calculated PR-AUC, Drift scores, and Threshold data.
-        """
-        return self._get(ENDPOINTS["performance"]) or {}
-
-    def get_model_curves(self) -> Dict[str, List[float]]:
-        """
-        Fetches pre-calculated X and Y coordinates for Precision-Recall curves.
-        Dashboard just draws the lines; no math involved.
-        """
-        return self._get("/ml/curves") or {"precision": [], "recall": [], "thresholds": []}
-
-    # ==========================================================================
-    # 4. RAW DATA (For Tables/Forensics Only)
-    # ==========================================================================
-    def get_transaction_stream(self, limit: int = 100) -> pd.DataFrame:
-        """
-        Fetches raw transactions for the Forensics table.
-        This is the only 'heavy' data, used exclusively for the search/table view.
-        """
-        data = self._get(ENDPOINTS["recent"], params={"limit": limit})
-        if not data:
-            return pd.DataFrame()
-        return pd.DataFrame(data)
-
+        url = Endpoints.build_url(Endpoints.TIMESERIES)
+        data = self._get(url)
         
+        if not data:
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(data)
+        
+        try:
+            if "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+            return df
+        except Exception as e:
+            logger.error(f"Timestamp parsing error: {e}")
+            return pd.DataFrame()
+
+    # ==========================================================================
+    # 3. LIVE STREAMS & TABLES
+    # ==========================================================================
+    def get_recent_transactions(self, limit: int = 20) -> pd.DataFrame:
+        """
+        Fetches the live stream of recent transactions.
+        Endpoint: /recent
+        """
+        url = Endpoints.build_url(Endpoints.RECENT_TRANSACTIONS)
+        data = self._get(url, params={"limit": limit})
+        
+        if not data:
+            return pd.DataFrame()
+            
+        return pd.DataFrame(data)
+
+    def get_alerts(self, limit: int = 20) -> pd.DataFrame:
+        """
+        Fetches only high-risk alerts.
+        Endpoint: /alerts
+        """
+        url = Endpoints.build_url(Endpoints.ALERTS)
+        data = self._get(url, params={"limit": limit})
+        
+        if not data:
+            return pd.DataFrame()
+            
+        return pd.DataFrame(data)
+
+    def get_threshold_optimization_curve(self) -> pd.DataFrame:
+        """
+        Fetches the threshold vs. total loss data for the optimization plot.
+        Endpoint: /exec/threshold-optimization
+        """
+        # Ensure 'THRESHOLD_OPTIMIZATION' is defined in your Endpoints config
+        url = Endpoints.build_url(Endpoints.THRESHOLD_OPTIMIZATION)
+        data = self._get(url)
+        
+        if not data:
+            return pd.DataFrame()
+            
+        # Converts list of dicts [{"threshold": 0.1, "total_loss": 100}, ...]
+        # directly into a column-based DataFrame
+        return pd.DataFrame(data)
+
+    # ==========================================================================
+    # 4. FORENSICS (Drill Down)
+    # ==========================================================================
+    def get_transaction_detail(self, transaction_id: str) -> Dict[str, Any]:
+        """
+        Fetches deep-dive data (SHAP values) for a specific ID.
+        Endpoint: /transactions/{id}
+        """
+        url = Endpoints.build_url(Endpoints.TRANSACTION_DETAIL, id=transaction_id)
+        return self._get(url) or {}

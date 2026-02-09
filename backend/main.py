@@ -133,7 +133,6 @@ def get_metrics():
         "redis_connected": redis_status,
     }
 
-
 @app.get("/stats", response_model=StatsResponse, tags=["Dashboard"])
 def get_stat_performance_report():
     try: 
@@ -177,7 +176,13 @@ def get_stat_performance_report():
         # Providing a 500 detail helps you debug if a key is missing in Redis
         raise HTTPException(status_code=500, detail=f"Data mapping error: {str(e)}")
 
-
+@app.get("/exec/threshold-optimization", tags=["Dashboard"])
+def get_threshold_curve():
+    data = redis_client.get("stats:threshold_cost_curve")
+    if not data:
+        return []
+    return json.loads(data)
+      
 @app.get("/exec/series", tags=["Dashboard"])
 def get_financial_timeseries():
     try:
@@ -185,23 +190,35 @@ def get_financial_timeseries():
         if not raw_data:
             return []
 
-        # Downsampling logic
+        cleaned_data = []
+        last_point = None
+        
+        for item in raw_data:
+            current_point = json.loads(item)
+            if last_point is None:
+                cleaned_data.append(current_point)
+            else:
+                if (current_point['cumulative_savings'] != last_point['cumulative_savings'] or
+                    current_point['cumulative_loss'] != last_point['cumulative_loss']):
+                    cleaned_data.append(current_point)
+            last_point = current_point
+        
         TARGET = 1000
-        total_points = len(raw_data)
-        step = max(1, total_points // TARGET) 
-        sampled_raw = raw_data[::step]
+        total_points = len(cleaned_data)
         
-        series = [json.loads(x) for x in sampled_raw]
-        
-        # Ensure the most recent point is always included
-        last_point = json.loads(raw_data[-1])
-        if series and series[-1].get('timestamp') != last_point.get('timestamp'):
-            series.append(last_point)
+        if total_points <= TARGET:
+            series = cleaned_data
+        else:
+            step = (total_points + TARGET - 1) // TARGET #max(1, total_points // TARGET)
+            series = cleaned_data[::step]
             
+            if cleaned_data and series[-1]['timestamp'] != cleaned_data[-1]['timestamp']:
+                series.append(cleaned_data[-1])
+                
         return series
     except Exception as e:
         logger.error(f"Timeseries error: {e}")
-        return []       
+        return []
 
 @app.get("/recent", response_model=List[Transaction], tags=["Dashboard"])
 def get_recent_stream(limit: int = Query(100, ge=1, le=1000)):
