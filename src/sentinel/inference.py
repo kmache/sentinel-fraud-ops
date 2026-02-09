@@ -240,7 +240,7 @@ class SentinelInference:
         Extract data for dashboard.
         """
         DASHBOARD_FEATURES = [
-            'P_emaildomain', 'TransactionAmt', 'ProductCD','TransactionAmt_log', 'TransactionAmt_suspicious', 'cents_value',
+            'P_emaildomain', 'TransactionAmt', 'ProductCD', 'card4', 'TransactionAmt_log', 'TransactionAmt_suspicious', 'cents_value',
             'country', 'composite_risk_score', 'DeviceType', 'os_browser_combo', 
             'UID_velocity_1h', 'UID_velocity_12h', 'UID_velocity_24h',
             'multi_entity_sharing', 'card_email_combo', 'device_info_combo', 

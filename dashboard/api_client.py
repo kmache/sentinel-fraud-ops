@@ -117,9 +117,7 @@ class SentinelClient:
         
         if not data:
             return pd.DataFrame()
-            
-        # Converts list of dicts [{"threshold": 0.1, "total_loss": 100}, ...]
-        # directly into a column-based DataFrame
+        
         return pd.DataFrame(data)
 
     # ==========================================================================
@@ -132,3 +130,4 @@ class SentinelClient:
         """
         url = Endpoints.build_url(Endpoints.TRANSACTION_DETAIL, id=transaction_id)
         return self._get(url) or {}
+    

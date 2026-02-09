@@ -112,7 +112,7 @@ def _render_financial_chart(timeseries_df: pd.DataFrame):
     fig_fin.update_yaxes(title_text="Savings ($)", secondary_y=False)
     fig_fin.update_yaxes(title_text="Loss ($)", secondary_y=True)
     
-    st.plotly_chart(fig_fin, key="fin_chart", use_container_width=True)
+    st.plotly_chart(fig_fin, key="fin_chart", width='stretch')
     st.markdown("<br>", unsafe_allow_html=True)
 
 
@@ -124,15 +124,23 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
     with c1:
         fraud_col = 'is_fraud' 
         amt_col = 'TransactionAmt'
-        path_cols = ['ProductCD', 'DeviceType']
+        
+        # CHANGED: Added 'card4' to the hierarchy
+        path_cols = ['ProductCD', 'card4', 'DeviceType']
         
         if not recent_df.empty and fraud_col in recent_df.columns:
             fraud_only = recent_df[recent_df[fraud_col] == 1].copy()
             
+            # Dynamic cleaning for all columns in the path
             for col in path_cols:
                 if col in fraud_only.columns:
+                    # Clean up card strings (e.g., 'mastercard' -> 'Mastercard') for better visuals
+                    if col == 'card4':
+                        fraud_only[col] = fraud_only[col].str.capitalize()
+                    
                     fraud_only[col] = fraud_only[col].fillna("Unknown").replace("", "Unknown")
             
+            # Only use columns that actually exist in the dataframe
             available_path = [c for c in path_cols if c in fraud_only.columns]
             
             if not fraud_only.empty and available_path:
@@ -150,16 +158,16 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
                 )
 
                 fig_sun.update_layout(
-                    # --- CENTRALIZE TITLE ---
+                    # --- CENTRALIZE TITLE (Updated to reflect Card) ---
                     title={
-                        'text': "Fraud Distribution: Product > Device",
+                        'text': "Fraud: Product > Card > Device",
                         'y': 0.95,
                         'x': 0.5,
                         'xanchor': 'center',
                         'yanchor': 'top'
                     },
                     height=420, 
-                    margin=dict(t=80, b=50, l=10, r=10), # Increased top margin for title
+                    margin=dict(t=80, b=50, l=10, r=10),
                     paper_bgcolor='rgba(0,0,0,0)',
                     font=dict(color="white"),
                     coloraxis_showscale=False 
@@ -175,15 +183,22 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
                     align="center"
                 )
                 
+                # CHANGED: Fixed deprecated param 'width' to 'use_container_width'
                 st.plotly_chart(fig_sun, use_container_width=True)
                 
                 # --- CENTRALIZE CAPTION ---
                 if 'ProductCD' in fraud_only.columns:
                     top_p = fraud_only.groupby('ProductCD')[amt_col].sum().idxmax()
+                    # Optional: Add top card to insight
+                    insight_text = f"Most fraud volume is concentrated in <b>{top_p}</b> transactions."
+                    if 'card4' in fraud_only.columns:
+                        top_c = fraud_only.groupby('card4')[amt_col].sum().idxmax()
+                        insight_text += f" (Top Card: <b>{top_c}</b>)"
+
                     st.markdown(
                         f"""
                         <p style='text-align: center; font-size: 0.85rem; color: #888;'>
-                            📊 <b>Insight:</b> Most fraud volume is concentrated in <b>{top_p}</b> transactions.
+                            📊 <b>Insight:</b> {insight_text}
                         </p>
                         """, 
                         unsafe_allow_html=True
@@ -226,7 +241,7 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
                 showlegend=False,
                 margin=dict(t=40, b=10, l=10, r=10)
             )
-            st.plotly_chart(fig_curve, use_container_width=True, key="threshold_curve")
+            st.plotly_chart(fig_curve, width='stretch', key="threshold_curve")
 
 
 # ==============================================================================

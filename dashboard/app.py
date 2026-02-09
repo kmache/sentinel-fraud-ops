@@ -52,7 +52,6 @@ with st.sidebar:
     # 2.2 Preferences
     with st.expander("⚙️ View Settings", expanded=True):
         refresh_rate = st.slider("Refresh Rate (s)", 1, 60, 5)
-        # We only pass data_limit to the API, so this is efficient
         data_limit = st.select_slider("History Depth", options=[100, 500, 1000, 2000], value=500)
     
     st.markdown("---")
@@ -157,7 +156,11 @@ def main():
                 )
             
         elif page == "Ops Center":
-            ops.load_view() # Using standard naming convention from your first prompt
+            ops.render_page(
+                recent_df=df, 
+                alerts_df=alerts_df, 
+                metrics=stats
+            ) 
             
         elif page == "ML Monitor":
             ml.load_view()

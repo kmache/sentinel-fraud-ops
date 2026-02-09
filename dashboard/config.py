@@ -23,7 +23,7 @@ class StandardColumns:
     
     # Context Data
     DEVICE = "device"
-    NETWORK = "network"
+    NETWORK = "card4"
     EMAIL = "P_emaildomain"
     IP = "ip_address"
     PRODUCT = "ProductCD"  
