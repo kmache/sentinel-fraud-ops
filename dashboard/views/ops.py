@@ -84,7 +84,7 @@ def _render_ops_kpis(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: 
             df_high_risk = recent_df[recent_df["action"].isin(["BLOCK"])] 
             total_high_risk = len(recent_df[recent_df['score'] > metrics.get('threshold', 0.5)])
             if total_high_risk > 0:
-                ratio = 100 * (len(df_high_risk) / total_high_risk) if total_high_risk > 0 else None
+                ratio = round(100 * (len(df_high_risk) / total_high_risk), 2) if total_high_risk > 0 else None
         
         st.markdown(f"""
         <div style="background-color: {COLORS['safe']}15; padding: 15px; border-radius: 10px; border-left: 5px solid {COLORS['safe']}; margin-bottom: 10px;">
