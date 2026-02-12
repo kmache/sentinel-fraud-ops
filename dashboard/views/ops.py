@@ -2,91 +2,94 @@ import os
 import sys
 import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
 import pandas as pd
-from datetime import datetime, timedelta
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from styles import COLORS, apply_plot_style, render_header
+from styles import COLORS, apply_plot_style, kpi_card, render_header
 
 # ==============================================================================
 # 1. COMPONENT FUNCTIONS (The "Rows")
 # ==============================================================================
-
 def _render_ops_kpis(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: dict):
     """
     Top Row: Operational Efficiency Metrics.
-    Uses custom HTML to match the Executive KPI style but with Ops-specific indicators.
+    Now uses shared kpi_card for consistency.
     """
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        active_alerts = len(alerts_df) 
-        color = COLORS['danger'] if active_alerts > 20 else COLORS['warning'] if active_alerts > 10 else COLORS['safe']
-        
-        st.markdown(f"""
-        <div style="background-color: {color}15; padding: 15px; border-radius: 10px; border-left: 5px solid {color}; margin-bottom: 10px;">
-            <p style="margin: 0; font-size: 0.9rem; color: #aaa;">Active Alerts</p>
-            <h2 style="margin: 0; font-size: 1.8rem; color: #fff;">{active_alerts}</h2>
-            <p style="margin: 0; font-size: 0.8rem; color: {color};">
-                {'🚨 Critical' if active_alerts > 20 else '⚠️ Elevated' if active_alerts > 10 else '✅ Normal Queue'}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        active_alerts = len(alerts_df)
+        if active_alerts > 20:
+            status = "🚨 Critical"
+            color = COLORS['danger']
+        elif active_alerts > 10:
+            status = "⚠️ Elevated"
+            color = COLORS['warning']
+        else:
+            status = "✅ Normal Queue"
+            color = COLORS['safe']
+            
+        st.markdown(
+            kpi_card("Active Alerts", f"{active_alerts}", status, color),
+            unsafe_allow_html=True
+        )
 
     with c2:
         mttr = 0
         if not alerts_df.empty and 'timestamp' in alerts_df.columns:
             alerts_df['dt'] = pd.to_datetime(alerts_df['timestamp'])
             oldest = (pd.Timestamp.now() - alerts_df['dt'].min()).total_seconds() / 60
-            mttr = max(2, oldest / 2) # Mock logic
-        
-        color = COLORS['danger'] if mttr > 30 else COLORS['warning'] if mttr > 15 else COLORS['safe']
-        st.markdown(f"""
-        <div style="background-color: {color}15; padding: 15px; border-radius: 10px; border-left: 5px solid {color}; margin-bottom: 10px;">
-            <p style="margin: 0; font-size: 0.9rem; color: #aaa;">Est. Resolution Time</p>
-            <h2 style="margin: 0; font-size: 1.8rem; color: #fff;">{mttr:.0f} <span style="font-size:1rem">min</span></h2>
-            <p style="margin: 0; font-size: 0.8rem; color: {color};">
-                {'🚨 Backlog' if mttr > 30 else '⚡ On Track'}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+            mttr = max(2, oldest / 2)
+
+        if mttr > 30:
+            status = "🚨 Backlog"
+            color = COLORS['danger']
+        elif mttr > 15:
+            status = "⚠️ Behind"
+            color = COLORS['warning']
+        else:
+            status = "⚡ On Track"
+            color = COLORS['safe']
+
+        st.markdown(
+            kpi_card("Est. Resolution Time", f"{mttr:.0f} min", status, color),
+            unsafe_allow_html=True
+        )
 
     with c3:
         velocity = 0
         if not recent_df.empty and 'score' in recent_df.columns:
             high_risk_now = len(recent_df[recent_df['score'] > 0.8])
             velocity = int(high_risk_now * 0.1) 
-        
-        color = COLORS['highlight']
+
         icon = "📈" if velocity >= 0 else "📉"
+        status = f"{icon} New High-Risk Events"
+        color = COLORS['highlight']
         
-        st.markdown(f"""
-        <div style="background-color: {color}15; padding: 15px; border-radius: 10px; border-left: 5px solid {color}; margin-bottom: 10px;">
-            <p style="margin: 0; font-size: 0.9rem; color: #aaa;">Risk Velocity (15m)</p>
-            <h2 style="margin: 0; font-size: 1.8rem; color: #fff;">{icon} +{velocity}</h2>
-            <p style="margin: 0; font-size: 0.8rem; color: {color};">New High-Risk Events</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            kpi_card("Risk Velocity (15m)", f"{icon} +{velocity}", status, color),
+            unsafe_allow_html=True
+        )
 
     with c4:
-        ratio = None
-        if not recent_df.empty:
-            df_high_risk = recent_df[recent_df["action"].isin(["BLOCK"])] 
+        ratio = 0
+        if not recent_df.empty and 'action' in recent_df.columns and 'score' in recent_df.columns:
+            df_high_risk = recent_df[recent_df["action"].isin(["BLOCK"])]
             total_high_risk = len(recent_df[recent_df['score'] > metrics.get('threshold', 0.5)])
             if total_high_risk > 0:
-                ratio = round(100 * (len(df_high_risk) / total_high_risk), 2) if total_high_risk > 0 else None
+                ratio = round(100 * (len(df_high_risk) / total_high_risk), 2)
+
+        status = "AI Confidence Level"
+        color = COLORS['safe']
         
-        st.markdown(f"""
-        <div style="background-color: {COLORS['safe']}15; padding: 15px; border-radius: 10px; border-left: 5px solid {COLORS['safe']}; margin-bottom: 10px;">
-            <p style="margin: 0; font-size: 0.9rem; color: #aaa;">Auto-Resolution</p>
-            <h2 style="margin: 0; font-size: 1.8rem; color: #fff;">{ratio}%</h2>
-            <p style="margin: 0; font-size: 0.8rem; color: {COLORS['safe']};">AI Confidence Level</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            kpi_card("Auto-Resolution", f"{ratio}%", status, color),
+            unsafe_allow_html=True
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
+
 
 def _render_alert_queue(alerts_df: pd.DataFrame):
     """
@@ -157,11 +160,13 @@ def _render_alert_queue(alerts_df: pd.DataFrame):
         
         with c_investigate:
             if st.button("🕵️‍♂️ Investigate Case", type="primary", width='stretch'):
-                st.session_state['selected_case'] = tx_id
-                
-                st.session_state.nav_selection = "Forensics"
                 
                 st.query_params["page"] = "Forensics"
+                st.query_params["case_id"] = tx_id
+
+                st.session_state['selected_case'] = tx_id
+
+                st.session_state["needs_hard_refresh"] = True
                 
                 st.rerun()
         
@@ -200,7 +205,7 @@ def _render_charts_row(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics
                 bargap=0.1
             )
                         
-            st.plotly_chart(fig_hist, width='stretch')
+            st.plotly_chart(fig_hist, width='stretch', key="ops_risk_hist")
         else:
             st.info("Waiting for transaction data...")
 
@@ -227,7 +232,7 @@ def _render_charts_row(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics
                 yaxis_title="Alert Count",
                 hovermode="x unified"
             )
-            st.plotly_chart(fig_time, width='stretch')
+            st.plotly_chart(fig_time, width='stretch', key="ops_alert_timeline")
         else:
             st.info("Waiting for alert history...")
 

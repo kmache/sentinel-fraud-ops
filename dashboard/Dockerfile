@@ -7,7 +7,6 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Added libgomp1 and python3-dev for scipy/sklearn stability
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
@@ -20,7 +19,6 @@ RUN uv pip install --system --no-cache -r requirements.txt
 
 COPY . .
 
-# Non-root user for security
 RUN useradd -m -u 1000 streamlit && \
     chown -R streamlit:streamlit /app
 USER streamlit

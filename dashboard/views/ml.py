@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import plotly.figure_factory as ff
+from scipy.stats import gaussian_kde
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -57,38 +57,58 @@ def _render_stability_row(recent_df: pd.DataFrame, metrics: dict, calibration_da
     with c1:
         st.subheader("🧠 Score Distribution (Density)")
         if not recent_df.empty and 'score' in recent_df.columns:
-            hist_data = [recent_df['score'].values]
-            group_labels = ['Model Confidence'] 
+            scores = recent_df['score'].dropna()
             
+            fig_dist = go.Figure()
+
+            fig_dist.add_trace(go.Histogram(
+                x=scores,
+                nbinsx=50,
+                name="Density",
+                histnorm='probability density',
+                marker_color=COLORS['highlight'],
+                opacity=0.4
+            ))
+
             try:
-                fig_dist = ff.create_distplot(
-                    hist_data, group_labels, 
-                    bin_size=.025, 
-                    colors=[COLORS['highlight']],
-                    show_rug=True,
-                    show_curve=True
-                )
-            except: 
-                fig_dist = px.histogram(recent_df, x='score', nbins=50)
+                kde = gaussian_kde(scores)
+                x_range = np.linspace(0, 1, 100)
+                y_kde = kde(x_range)
+                
+                fig_dist.add_trace(go.Scatter(
+                    x=x_range,
+                    y=y_kde,
+                    mode='lines',
+                    name='KDE',
+                    line=dict(color=COLORS['highlight'], width=3)
+                ))
+            except Exception as e:
+                pass
 
             threshold = metrics.get('threshold', 0.5)
-            fig_dist.add_vline(x=threshold, line_dash="dash", line_color=COLORS['danger'], annotation_text="Active Threshold")
+            fig_dist.add_vline(
+                x=threshold, 
+                line_dash="dash", 
+                line_color=COLORS['danger'], 
+                annotation_text="Active Threshold"
+            )
 
             fig_dist = apply_plot_style(fig_dist, title="")
             fig_dist.update_layout(
                 xaxis_title="Risk Score (0.0 = Safe, 1.0 = Fraud)",
                 yaxis_title="Density",
                 showlegend=False,
-                margin=dict(t=20, b=20)
+                margin=dict(t=20, b=20),
+                bargap=0.05
             )
-            st.plotly_chart(fig_dist, width='stretch')
+            
+            st.plotly_chart(fig_dist, width='stretch', key="ml_density_kde")
             st.caption("💡 **Interpretation:** A healthy model is 'polarized' (peaks at 0 and 1). A growing hump near 0.5 indicates model confusion.")
         else:
             st.info("Waiting for inference data...")
 
     with c2:
         st.subheader("🎯 Calibration")
-        
         fig_cal = go.Figure()
 
         fig_cal.add_trace(go.Scatter(
@@ -107,7 +127,6 @@ def _render_stability_row(recent_df: pd.DataFrame, metrics: dict, calibration_da
                 marker=dict(size=8, symbol="diamond"),
                 name='Current Model'
             ))
-            
             st.caption("💡 **Interpretation:** Points below the diagonal mean the model is **Overconfident**.")
         else:
             st.info("ℹ️ Waiting for calibration data...")
@@ -121,7 +140,7 @@ def _render_stability_row(recent_df: pd.DataFrame, metrics: dict, calibration_da
             legend=dict(x=0.01, y=0.99, bgcolor='rgba(0,0,0,0)'),
             margin=dict(t=10, b=10, l=10, r=10)
         )
-        st.plotly_chart(fig_cal, width='stretch')
+        st.plotly_chart(fig_cal, width='stretch', key="ml_calibration_chart")
 
     st.markdown("---")
 
@@ -158,9 +177,10 @@ def _render_threshold_simulator(lookup_table: dict, current_metrics: dict):
     with col_input:
         st.markdown("<br>", unsafe_allow_html=True)
 
+        current_threshold = current_metrics.get('threshold', 0.5)
         sim_threshold = st.slider(
             "Simulate Risk Threshold", 
-            min_value=0.0, max_value=1.0, value=0.5, step=0.01, 
+            min_value=0.0, max_value=1.0, value=current_threshold, step=0.01, 
             help="Adjust to see how the model WOULD HAVE performed on this data."
         )
 
@@ -192,13 +212,13 @@ def _render_threshold_simulator(lookup_table: dict, current_metrics: dict):
         fig_sim.add_trace(go.Scatter(
             x=sim_df['threshold'], y=sim_df['precision'],
             mode='lines', name='Precision',
-            line=dict(color=COLORS['safe'])
+            line=dict(color=COLORS['safe'], width=3)
         ))
         
         fig_sim.add_trace(go.Scatter(
             x=sim_df['threshold'], y=sim_df['recall'],
             mode='lines', name='Recall',
-            line=dict(color=COLORS['highlight'])
+            line=dict(color=COLORS['warning'], width=3)
         ))
         
         fig_sim.add_vline(x=sim_threshold, line_dash="dash", line_color="white", annotation_text="Selected")
@@ -211,7 +231,7 @@ def _render_threshold_simulator(lookup_table: dict, current_metrics: dict):
             height=300,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        st.plotly_chart(fig_sim, width='stretch')
+        st.plotly_chart(fig_sim, width='stretch', key="threshold_simulator")
 
     st.markdown("---")
 
@@ -248,7 +268,7 @@ def _render_feature_analysis_row(explain_df: pd.DataFrame, drift_dict: dict):
                 margin=dict(l=0, r=40, t=10, b=0),
                 xaxis_title="Avg Absolute SHAP Value"
             )
-            st.plotly_chart(fig_feat, width='stretch')
+            st.plotly_chart(fig_feat, width='stretch', key="feature_importance")
             st.caption("Top factors currently driving model decisions.")
 
     with c2:
@@ -284,7 +304,7 @@ def _render_feature_analysis_row(explain_df: pd.DataFrame, drift_dict: dict):
                 margin=dict(l=0, r=0, t=10, b=0),
                 xaxis_title="PSI Score"
             )
-            st.plotly_chart(fig_drift, width='stretch')
+            st.plotly_chart(fig_drift, width='stretch', key="feature_drift")
             st.caption("Measures if live data has shifted from training baseline.")
 
 # ==============================================================================

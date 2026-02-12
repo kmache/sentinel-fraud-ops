@@ -1,11 +1,9 @@
 import requests
 import logging
-import json
 import pandas as pd
 from typing import Dict, Any, Optional, List
 from config import Endpoints, REQUEST_TIMEOUT
 
-# Initialize Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ApiClient")
 
@@ -175,4 +173,3 @@ class SentinelClient:
         url = Endpoints.build_url(Endpoints.CALIBRATION_DATA)
         return self._get(url) or {}
     
-

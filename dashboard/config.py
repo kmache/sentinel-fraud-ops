@@ -14,30 +14,27 @@ REQUEST_TIMEOUT: Final = float(os.getenv("REQUEST_TIMEOUT", "5.0"))
 # ==============================================================================
 class StandardColumns:
     """Centralized column names for type-safe access."""
-    # Transaction Data
+    
     AMOUNT = "TransactionAmt"
     SCORE = "score"
     IS_FRAUD = "is_fraud"
     TRANSACTION_ID = "transaction_id"
     TIMESTAMP = "timestamp"
     
-    # Context Data
     DEVICE = "device"
     NETWORK = "card4"
     EMAIL = "P_emaildomain"
     IP = "ip_address"
     PRODUCT = "ProductCD"  
     
-    # Business Metrics
     NET_SAVINGS = "net_savings"
     FRAUD_PREVENTED = "fraud_stopped_val"
     FALSE_POSITIVE_LOSS = "false_positive_loss"
     PRECISION = "precision"
     RECALL = "recall"
 
-# Mapping: { Raw_Backend_Field : StandardColumns_Value }
 COLUMN_MAPPING: Dict[str, str] = {
-    # IEEE-CIS / Raw Dataset columns
+
     'TransactionAmt':       StandardColumns.AMOUNT,
     'TransactionID':        StandardColumns.TRANSACTION_ID,
     'TransactionDT':        StandardColumns.TIMESTAMP,
@@ -47,7 +44,6 @@ COLUMN_MAPPING: Dict[str, str] = {
     'addr1':                StandardColumns.IP,
     'ProductCD':            StandardColumns.PRODUCT,
     
-    # Cleaned / Pydantic Schema
     'amount':               StandardColumns.AMOUNT,
     'transaction_id':       StandardColumns.TRANSACTION_ID,
     'timestamp':            StandardColumns.TIMESTAMP,
@@ -56,7 +52,6 @@ COLUMN_MAPPING: Dict[str, str] = {
     'is_fraud':             StandardColumns.IS_FRAUD,
     'product':              StandardColumns.PRODUCT,
     
-    # Stats
     'net_savings':          StandardColumns.NET_SAVINGS,
     'fraud_stopped_val':    StandardColumns.FRAUD_PREVENTED,
     'false_positive_loss':  StandardColumns.FALSE_POSITIVE_LOSS

@@ -23,7 +23,7 @@ COLORS = {
 def setup_page(title="Sentinel Dashboard", layout="wide"):
     st.set_page_config(
         page_title=title,
-        page_icon="🛡️",
+        page_icon="logo.png",
         layout=layout,
         initial_sidebar_state="expanded" 
     )

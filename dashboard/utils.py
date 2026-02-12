@@ -32,7 +32,6 @@ def clean_dataframe(data) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Work on a copy
     cleaned = df.copy()
 
     rename_dict = {k: v for k, v in COLUMN_MAPPING.items() if k in cleaned.columns}

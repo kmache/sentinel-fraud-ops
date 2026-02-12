@@ -1,7 +1,6 @@
 import os
 import sys
 import streamlit as st
-import pandas as pd
 import plotly.graph_objects as go
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -41,7 +40,7 @@ def _render_case_header(data: dict):
     score = data.get('score', 0)
     
     color = COLORS['danger'] if is_fraud else COLORS['safe']
-    status = "🛑 HIGH RISK BLOCKED" if is_fraud else "✅ LOW RISK APPROVED"
+    status = "🛑 HIGH RISK: BLOCKED" if is_fraud else "✅ LOW RISK: APPROVED"
     
     st.markdown(f"""
     <div style="

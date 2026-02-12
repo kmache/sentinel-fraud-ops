@@ -21,7 +21,7 @@ class Transaction(BaseModel):
         populate_by_name = True
 
 class StatsResponse(BaseModel):
-    # Performance
+   
     precision: float
     recall: float
     fpr_insult_rate: float
@@ -29,13 +29,11 @@ class StatsResponse(BaseModel):
     fraud_rate: float
     f1_score: float            
     
-    # Financials
     fraud_stopped_val: float
     fraud_missed_val: float
     false_positive_loss: float
     net_savings: float
     
-    # Counts / Meta
     total_processed: int
     queue_depth: int
     threshold: float

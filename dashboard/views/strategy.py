@@ -99,7 +99,7 @@ def _render_cost_optimization(curve_df: pd.DataFrame, current_threshold: float):
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
 
-    st.plotly_chart(fig, width='stretch')
+    st.plotly_chart(fig, width='stretch', key="roi_cost_curve")
 
     diff = current_threshold - best_t
     savings = current_loss - min_loss
@@ -146,7 +146,7 @@ def _render_rule_performance(recent_df: pd.DataFrame):
             )
             fig_prod = apply_plot_style(fig_prod, "")
 
-            st.plotly_chart(fig_prod, width='stretch')
+            st.plotly_chart(fig_prod, width='stretch', key="product_performance")
         else:
             st.warning("Product data not available.")
 
@@ -169,7 +169,7 @@ def _render_rule_performance(recent_df: pd.DataFrame):
             )
             fig_card = apply_plot_style(fig_card, "")
 
-            st.plotly_chart(fig_card, width='stretch')
+            st.plotly_chart(fig_card, width='stretch', key="network_performance")
         else:
             st.warning("Card Network data not available.")
 

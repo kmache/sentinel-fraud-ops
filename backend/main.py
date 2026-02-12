@@ -16,7 +16,7 @@ import psutil
 import redis
 import asyncio
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -89,7 +89,6 @@ async def lifespan(app: FastAPI):
 
     yield
     
-    # ----Shutdown----------
     logger.info("🛑 Gateway shutting down...")
     try:
         redis_client.close()
@@ -140,18 +139,14 @@ def get_stat_performance_report():
         if not raw_data:
             raise HTTPException(status_code=404, detail="Stats not available")
         
-        # Load the string from Redis into a dictionary
         data = json.loads(raw_data)
         
-        # Extract the nested blocks provided by evaluator.report_business_impact
         perf = data.get('performance', {})
         finance = data.get('financials', {})
         counts = data.get('counts', {})
         meta = data.get('meta', {})
 
-        # Flatten the data to match StatsResponse
         return {
-            # 1. Performance
             "precision": perf.get('precision', 0),
             "recall": perf.get('recall', 0),
             "fpr_insult_rate": perf.get('fpr_insult_rate', 0),
@@ -159,13 +154,11 @@ def get_stat_performance_report():
             "f1_score": perf.get('f1_score', 0),
             "fraud_rate": perf.get('fraud_rate', 0),
 
-            # 2. Financials
             "fraud_stopped_val": finance.get('fraud_stopped_val', 0),
             "fraud_missed_val": finance.get('fraud_missed_val', 0),
             "false_positive_loss": finance.get('false_positive_loss', 0),
             "net_savings": finance.get('net_savings', 0),
 
-            # 3. Counts & Metadata
             "total_processed": counts.get('total_processed', 0),
             "live_latency_ms": counts.get('live_latency_ms', 0),
             
@@ -177,7 +170,6 @@ def get_stat_performance_report():
 
     except Exception as e:
         logger.error(f"Stats Report Mapping Error: {e}")
-        # Providing a 500 detail helps you debug if a key is missing in Redis
         raise HTTPException(status_code=500, detail=f"Data mapping error: {str(e)}")
 
 @app.get("/exec/threshold-optimization", tags=["Dashboard"])
@@ -213,7 +205,7 @@ def get_financial_timeseries():
         if total_points <= TARGET:
             series = cleaned_data
         else:
-            step = (total_points + TARGET - 1) // TARGET #max(1, total_points // TARGET)
+            step = (total_points + TARGET - 1) // TARGET 
             series = cleaned_data[::step]
             
             if cleaned_data and series[-1]['timestamp'] != cleaned_data[-1]['timestamp']:
@@ -269,7 +261,6 @@ def get_global_feature_importance():
     Returns the aggregated feature importance (Average Absolute SHAP).
     """
     try:
-        # This key is updated by the GlobalMetricsWorker
         data = redis_client.get("stats:global_feature_importance")
         if not data:
             return []

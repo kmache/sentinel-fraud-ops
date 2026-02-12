@@ -3,7 +3,6 @@ import sys
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
-import numpy as np
 import pandas as pd
 from plotly.subplots import make_subplots
 
@@ -164,7 +163,7 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
                     font=dict(size=12, color=COLORS.get('highlight', '#00e676')),
                     align="center"
                 )
-                st.plotly_chart(fig_sun, width='stretch')
+                st.plotly_chart(fig_sun, width='stretch', key="fraud_sunburst")
                 
                 if 'ProductCD' in fraud_only.columns:
                     top_p = fraud_only.groupby('ProductCD')[amt_col].sum().idxmax()
