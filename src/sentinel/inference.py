@@ -86,6 +86,7 @@ class SentinelInference:
         start_time = time.time()
         df = self._to_df(data)
         df = self._type_consistency(df)
+        processed_records = {}
 
         try:
             df_clean = self.preprocessor.transform(df, verbose=self.verbose)
@@ -109,6 +110,9 @@ class SentinelInference:
                 else:
                     p = self.models[name].predict_proba(tem_df)[:, 1]
                 probs += (p * weight)
+
+                processed_record = tem_df.replace({np.nan: None}).to_dict('records')
+                processed_records[name] = processed_record
                 
         except Exception as e:
             logger.error(f"Prediction Error: {e}")
@@ -124,6 +128,7 @@ class SentinelInference:
         y_true = df['isFraud'].tolist() if 'isFraud' in df.columns else [0]*len(df)
         
         data4dashboard = self._extract_data_for_dashboard(df, df_features)
+  
 
         report = {
             "transaction_id": tnx_ids, 
@@ -132,11 +137,12 @@ class SentinelInference:
             "y_true": y_true, 
             "actions": actions,
             "dashboard_data": data4dashboard,
+            "processed_data_records": processed_records,
             "meta": {
                 "model_weights": weights,
                 "threshold": hard_threshold,
                 "timestamp": datetime.now().replace(microsecond=0).isoformat(), 
-                "latency_ms": int((time.time() - start_time) * 1000)
+                "latency_ms": int(((time.time() - start_time)/len(df)) * 1000)
             }
         }
         return report
@@ -177,7 +183,7 @@ class SentinelInference:
                 if abs(impact) > 1e-4:
                     impacts_list.append({
                         "feature": name,
-                        "value": str(val),
+                        "value": str(round(val, 4)), # str(val),
                         "impact": round(float(impact), 4)
                     })
             

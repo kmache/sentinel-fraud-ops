@@ -156,6 +156,7 @@ def get_stat_performance_report():
             "recall": perf.get('recall', 0),
             "fpr_insult_rate": perf.get('fpr_insult_rate', 0),
             "auc": perf.get('auc', 0),
+            "f1_score": perf.get('f1_score', 0),
             "fraud_rate": perf.get('fraud_rate', 0),
 
             # 2. Financials
@@ -166,7 +167,10 @@ def get_stat_performance_report():
 
             # 3. Counts & Metadata
             "total_processed": counts.get('total_processed', 0),
-            "threshold": meta.get('threshold', 0.5), 
+            "live_latency_ms": counts.get('live_latency_ms', 0),
+            
+            "threshold": meta.get('threshold', 0.5),
+            "total_lifetime_count": meta.get('total_lifetime_count', 0),
             "queue_depth": counts.get('queue_depth', 0), 
             "updated_at": meta.get('updated_at', ""),
         }
@@ -258,3 +262,41 @@ def get_transaction_detail(transaction_id: str):
     except Exception as e:
         logger.error(f"Forensics Detail Error for {transaction_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal Lookup Error")
+    
+@app.get("/exec/global-feature-importance", tags=["ML Monitor"])
+def get_global_feature_importance():
+    """
+    Returns the aggregated feature importance (Average Absolute SHAP).
+    """
+    try:
+        # This key is updated by the GlobalMetricsWorker
+        data = redis_client.get("stats:global_feature_importance")
+        if not data:
+            return []
+        return json.loads(data)
+    except Exception as e:
+        logger.error(f"Global SHAP API Error: {e}")  
+        return []
+
+@app.get("/exec/feature-drift", tags=["ML Monitor"])
+def get_feature_drift_report():
+    try:
+        data = redis_client.get("stats:feature_drift_report")
+
+        if not data:
+            return {}
+        return json.loads(data)
+    except Exception as e:
+        logger.error(f"Feature Drift Report API Error: {e}")  
+        return {} 
+    
+@app.get("/exec/performance-lookup", tags=["ML Monitor"])
+def get_performance_lookup():
+    data = redis_client.get("stats:simulation_table")
+    return json.loads(data) if data else {}
+
+@app.get("/exec/calibration", tags=["ML Monitor"])
+def get_calibration_report():
+    data = redis_client.get("stats:calibration_data")
+    return json.loads(data) if data else {}
+

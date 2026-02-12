@@ -78,7 +78,6 @@ class SentinelFeatureQuality(BaseEstimator, TransformerMixin):
                 if pd.api.types.is_numeric_dtype(neg):
                     ks_stat, _ = ks_2samp(neg, pos)
                 else:
-                    # Factorize categoricals for rough KS estimation
                     neg_codes = pd.factorize(neg, sort=True)[0]
                     pos_codes = pd.factorize(pos, sort=True)[0]
                     ks_stat, _ = ks_2samp(neg_codes, pos_codes)
@@ -314,5 +313,6 @@ class SentinelFeatureQuality(BaseEstimator, TransformerMixin):
         if 'UID' in self.X_train.columns and 'device_vendor' in self.X_train.columns:
             self.plot_fraud_network('UID', 'device_vendor')
 
-if name == "__main__":
+if __name__ == "__main__":
     print("Validation module loaded successfully!")
+

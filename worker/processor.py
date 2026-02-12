@@ -17,6 +17,9 @@ import time
 import redis
 import threading
 import traceback
+import numpy as np
+import pandas as pd
+from pathlib import Path
 from datetime import datetime
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import NoBrokersAvailable, CommitFailedError
@@ -73,6 +76,11 @@ REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
 
 MODEL_DIR = os.getenv('MODEL_DIR', '/app/models/prod_v1')
 
+# Cache for drift monitoring
+_CACHED_MONITORED_FEATURES = []
+_LAST_IMPORTANCE_REFRESH = 0
+IMPORTANCE_REFRESH_INTERVAL = 300  # Refresh Top 50 list every 5 minutes (300s)
+
 # ==============================================================================
 # 3. INITIALIZE CONNECTIONS
 # ==============================================================================
@@ -103,11 +111,37 @@ try:
 except Exception as e:
     logger.warning(json.dumps({"event": "⚠️ kafka_producer_failed", "error": str(e)}))
 
+
+
 log_event("⏳ Loading Inference Engine ...")
+def load_training_distribution_to_redis():  
+    """
+    Reads feature_baseline.json from the model directory and 
+    caches it in Redis for the drift detection worker.
+    """
+    baseline_path = Path(MODEL_DIR) / "feature_baseline.json"
+    
+    try:
+        if baseline_path.exists():
+            with open(baseline_path, 'r') as f: baseline_data = json.load(f)
+            
+            redis_client.set("stats:training_distribution", json.dumps(baseline_data))
+            
+            log_event(
+                "✅ Training Baseline Loaded", 
+                path=str(baseline_path), 
+                features_mapped=len(baseline_data)
+            )
+        else:
+            logger.error(f"❌ CRITICAL: feature_baseline.json not found at {baseline_path}. Drift analysis will fail.")
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to load training distribution to Redis: {e}")
 
 try:
     model_engine = SentinelInference(model_dir=MODEL_DIR)
     redis_client.set('config:threshold', model_engine.config.get('threshold', 0.5))
+    load_training_distribution_to_redis() 
     log_event("Model Weights Loaded", version=model_engine.config.get('weights', 'Unknown'))
 except Exception as e:
     logger.critical(json.dumps({"event": "❌ model_load_failed", "error": str(e)}))
@@ -154,13 +188,106 @@ def send_to_dlq(raw_data_list, error_reason, exception=None):
 # ==============================================================================
 # 5. ASYNC SHAP ENRICHMENT
 # ==============================================================================
+def update_global_feature_importance(batch_explanations):
+    """
+    Updates the Global Feature Importance in Redis using Exponential Moving Average.
+    This runs fast and doesn't require storing raw data.
+    """
+    try:
+        if not batch_explanations:
+            return
+        
+        batch_totals = {}
+        count = 0
+        
+        for tx_expl in batch_explanations:
+            count += 1
+            for item in tx_expl:
+                feat = item['feature']
+                impact = abs(item['impact']) 
+                batch_totals[feat] = batch_totals.get(feat, 0.0) + impact
+        batch_avg = {k: v / count for k, v in batch_totals.items()}
+        redis_key = "stats:global_feature_importance"
+        old_data_json = redis_client.get(redis_key)
+        
+        # Apply Moving Average
+        if old_data_json:
+            old_data = json.loads(old_data_json)
+            alpha = 0.1 
+            merged_data = {}
+            all_keys = set(batch_avg.keys()) | set(old_data.keys())
+            
+            for k in all_keys:
+                old_val = old_data.get(k, 0.0)
+                new_val = batch_avg.get(k, old_val) 
+                merged_data[k] = (old_val * (1 - alpha)) + (new_val * alpha)
+        else:
+            merged_data = batch_avg
+
+        sorted_items = sorted(merged_data.items(), key=lambda x: x[1], reverse=True)[:50]
+        final_payload = dict(sorted_items)
+
+        redis_client.set(redis_key, json.dumps(final_payload))
+
+    except Exception as e:
+        logger.error(f"⚠️ Global SHAP Update Failed: {e}")
+
+def log_raw_features_for_drift(pipe, raw_data_processed         ):
+    """
+    Pushes raw feature values to Redis lists for drift analysis.
+    Uses a cache to avoid hitting Redis for the 'Top 50' list every batch.
+    """
+    global _CACHED_MONITORED_FEATURES, _LAST_IMPORTANCE_REFRESH
+    
+    now = time.time()
+    
+    # 1. Refresh the list of features to monitor every 5 minutes
+    if (now - _LAST_IMPORTANCE_REFRESH) > IMPORTANCE_REFRESH_INTERVAL or not _CACHED_MONITORED_FEATURES:
+        try:
+            importance_json = redis_client.get("stats:global_feature_importance")
+            
+            if importance_json:
+                importance_data = json.loads(importance_json)
+                # Cache the Top 50 features
+                _CACHED_MONITORED_FEATURES = sorted(
+                    importance_data, key=importance_data.get, reverse=True
+                )[:50]
+                _LAST_IMPORTANCE_REFRESH = now
+                log_event("Refresh Monitored Features", count=len(_CACHED_MONITORED_FEATURES))
+        except Exception as e:
+            logger.error(f"⚠️ Failed to refresh monitored features: {e}")
+
+    # 2. If we have features to monitor, push their values to Redis
+    pushed_count = 0
+    if _CACHED_MONITORED_FEATURES:
+        for tx_features in raw_data_processed:
+            for feat in _CACHED_MONITORED_FEATURES:
+                if feat in tx_features:
+                    val = tx_features[feat]
+                    if val is None:
+                        val = np.nan
+                    try:
+                        float_val = float(val) 
+                        
+                        list_key = f"stats:hist_feat:{feat}"
+                        pipe.rpush(list_key, float_val)
+                        pipe.ltrim(list_key, -1000, -1)
+                        pushed_count += 1
+                        
+                    except (ValueError, TypeError):
+                        continue
+    return pushed_count
+
+
 def async_enrich_shap(ids, raw_data):
     """
     Background Thread: Calculates SHAP and updates Redis keys.
     This runs parallel to the main Kafka loop.
     """
     try:
-        batch_explanations = model_engine.explain(raw_data, n=10)
+        batch_explanations = model_engine.explain(raw_data, n=None)
+
+        update_global_feature_importance(batch_explanations)
         
         pipe = redis_client.pipeline()
         
@@ -170,7 +297,7 @@ def async_enrich_shap(ids, raw_data):
             current_json = redis_client.get(key)
             if current_json:
                 data = json.loads(current_json)
-                data['explanations'] = batch_explanations[i]
+                data['explanations'] = batch_explanations[i][:10]
                 data['explanation_status'] = "ready"
                 pipe.setex(key, 3600, json.dumps(data))
         
@@ -197,6 +324,7 @@ def flush_batch(messages):
     
     try:
         results = model_engine.predict(raw_data)
+        raw_processed = results.get("processed_data_records", {}).get('xgb', {}) 
     except Exception as e:
         log_event("Inference Batch Failed", error=str(e))
         logger.error("❌ CRITICAL INFERENCE ERROR:")
@@ -214,6 +342,11 @@ def flush_batch(messages):
     y_trues = results['y_true']
     dashboard_records = results['dashboard_data']
     weights = results.get("meta", {}).get("weights", {})
+
+    latency_ms = results.get("meta", {}).get("latency_ms", -1)
+    pipe = redis_client.pipeline()
+    pipe.set("stats:live_latency_ms", latency_ms) 
+    pipe.execute()  
 
     batch_savings_delta = 0.0
     batch_loss_delta = 0.0
@@ -260,7 +393,10 @@ def flush_batch(messages):
         _LAST_TS_WRITE_TIME = now
         _LAST_SAVED_VALUE = current_total_saved
         pipe.ltrim('sentinel_timeseries', -100000, -1) 
-        pipe.execute()
+
+        log_raw_features_for_drift(pipe, raw_processed)
+
+        execute_redis_pipeline(pipe)
 
         _LAST_TS_WRITE_TIME = now
         _LAST_SAVED_VALUE = current_total_saved 
@@ -271,7 +407,6 @@ def flush_batch(messages):
         score = float(probs[i])
         amt = float(dashboard_records[i].get('TransactionAmt', 0.0)) 
         truth = int(y_trues[i])
-
         payload = dashboard_records[i]
         payload.update({
             "transaction_id": ids[i],

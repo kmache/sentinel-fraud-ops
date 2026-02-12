@@ -1,109 +1,188 @@
 import os
 import sys
 import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
 import pandas as pd
-import networkx as nx
+import plotly.graph_objects as go
+import plotly.express as px
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from styles import COLORS, apply_plot_style, render_header
+from styles import COLORS, kpi_card, apply_plot_style, render_header
 
-def render_page(df: pd.DataFrame):
-    render_header("Strategy & Product", "Risk Profiling & Link Analysis")
+# ==============================================================================
+# ROW 1: BUSINESS CONVERSION KPIs
+# ==============================================================================
+def _render_conversion_kpis(metrics: dict, alerts_df: pd.DataFrame):
+    """
+    Focuses on "Customer Friction" and "Operational Load".
+    """
+    st.markdown("### 📈 Conversion & Operational Load")
+    c1, c2, c3, c4 = st.columns(4)
     
-    if df.empty:
-        st.info("ℹ️ Waiting for transaction stream data...")
+    total = metrics.get('total_processed', 1)
+    if total == 0: total = 1
+    
+    alert_count = len(alerts_df)
+    
+    with c1:
+        val = (1 - (alert_count / total))
+        st.markdown(kpi_card("Approval Rate", f"{val:.1%}", "Smooth Customer Path", COLORS['safe']), unsafe_allow_html=True)
+    
+    with c2:
+        val = (alert_count / total)
+        st.markdown(kpi_card("Challenge Rate", f"{val:.1%}", "Friction / 2FA Rate", COLORS['warning']), unsafe_allow_html=True)
+    
+    with c3:
+        if not alerts_df.empty and 'TransactionAmt' in alerts_df.columns:
+            val = alerts_df['TransactionAmt'].sum()
+        else:
+            val = 0
+        st.markdown(kpi_card("Revenue at Risk", f"${val/1000:,.1f}K", "Pending Investigation", COLORS['danger']), unsafe_allow_html=True)
+        
+    with c4:
+        missed = metrics.get('fraud_missed_val', 0)
+        ops_cost = alert_count * 15 
+        total_cost = (missed + ops_cost)
+        st.markdown(kpi_card("Total Risk Cost", f"${total_cost/1000:,.1f}K", "Loss + Review Expense", COLORS['neutral']), unsafe_allow_html=True)
+
+    st.markdown("---")
+
+# ==============================================================================
+# ROW 2: THE ROI FRONTIER (Cost Curve)
+# ==============================================================================
+def _render_cost_optimization(curve_df: pd.DataFrame, current_threshold: float):
+    """
+    Visualizes the "Sweet Spot" where loss is minimized.
+    """
+    st.subheader("🎯 Profit Maximization (ROI Frontier)")
+    
+    if curve_df.empty:
+        st.info("ℹ️ Calculating ROI Cost Curve... (Waiting for more data)")
+        return
+    
+    optimal_idx = curve_df['total_loss'].idxmin()
+    best_t = curve_df.loc[optimal_idx, 'threshold']
+    min_loss = curve_df.loc[optimal_idx, 'total_loss']
+
+    current_idx = (curve_df['threshold'] - current_threshold).abs().idxmin()
+    current_loss = curve_df.loc[current_idx, 'total_loss']
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=curve_df['threshold'], y=curve_df['total_loss'],
+        mode='lines', name='Total Economic Loss',
+        line=dict(color=COLORS['highlight'], width=4),
+        fill='tozeroy', fillcolor='rgba(0, 230, 118, 0.05)'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=[best_t], y=[min_loss],
+        mode='markers+text', name='Theoretical Optimal',
+        text=["MAX PROFIT"], textposition="bottom center",
+        marker=dict(color=COLORS['safe'], size=15, symbol="star")
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=[current_threshold], y=[current_loss],
+        mode='markers+text', name='Current Setting',
+        text=["ACTIVE"], textposition="top center",
+        marker=dict(color=COLORS['danger'], size=12, symbol="circle")
+    ))
+
+    fig = apply_plot_style(fig, title="Total Cost of Fraud vs. Risk Threshold")
+    fig.update_layout(
+        xaxis_title="Aggressiveness (Threshold)",
+        yaxis_title="Financial Impact ($)",
+        height=450,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    st.plotly_chart(fig, width='stretch')
+
+    diff = current_threshold - best_t
+    savings = current_loss - min_loss
+    
+    if abs(diff) < 0.05:
+        st.success(f"✅ **Strategy Insight:** Current threshold ({current_threshold:.2f}) is aligned with the economic optimal.")
+    elif diff > 0:
+        st.warning(f"⚠️ **Strategy Insight:** You are being too **Conservative**. Lowering the threshold to {best_t:.2f} could improve ROI by ${savings:,.0f}.")
+    else:
+        st.error(f"🚨 **Strategy Insight:** You are being too **Aggressive**. Raising the threshold to {best_t:.2f} would reduce operational costs by ${savings:,.0f}.")
+
+    st.markdown("---")
+
+# ==============================================================================
+# ROW 3: HEURISTIC RULE PERFORMANCE
+# ==============================================================================
+def _render_rule_performance(recent_df: pd.DataFrame):
+    """
+    Analyzes which high-level segments are performing poorly.
+    """
+    st.subheader("🛡️ Segment Strategy Analysis")
+    
+    if recent_df.empty:
+        st.info("Waiting for data...")
         return
 
-    # Normalize Columns
-    fraud_col = 'is_fraud' if 'is_fraud' in df.columns else 'ground_truth'
-    
     c1, c2 = st.columns(2)
 
-    # --- DEVICE RISK ---
     with c1:
-        if 'device_vendor' in df.columns:
-            # Simple aggregation
-            dev_risk = df.groupby('device_vendor')[fraud_col].mean().reset_index()
-            # Filter for visualisation
-            dev_risk = dev_risk.sort_values(fraud_col, ascending=True).tail(10)
+        if 'ProductCD' in recent_df.columns:
+            target_col = 'ground_truth' if 'ground_truth' in recent_df.columns else 'is_fraud'
             
-            fig_dev = px.bar(dev_risk, y='device_vendor', x=fraud_col, orientation='h', 
-                             color=fraud_col, color_continuous_scale='Reds', 
-                             labels={fraud_col: 'Fraud Rate'})
+            prod_perf = recent_df.groupby('ProductCD').agg({
+                'score': 'mean',
+                target_col: 'mean'
+            }).reset_index()
+            prod_perf.columns = ['Product', 'Avg Risk', 'Fraud Rate']
+            
+            fig_prod = px.bar(
+                prod_perf, x='Product', y='Fraud Rate', 
+                color='Avg Risk', 
+                title="Fraud Exposure by Product Line",
+                color_continuous_scale='Reds'
+            )
+            fig_prod = apply_plot_style(fig_prod, "")
 
-            fig_dev.update_layout(coloraxis_colorbar=dict(title="Rate", orientation="v", title_side="right"))
-            fig_dev = apply_plot_style(fig_dev, title="Risk by Device Vendor")
-            st.plotly_chart(fig_dev, use_container_width=True)
+            st.plotly_chart(fig_prod, width='stretch')
         else:
-            st.warning("Device data not available in stream.")
+            st.warning("Product data not available.")
 
-    # --- EMAIL DOMAIN RISK ---
     with c2:
-        # Check if email domain data exists in stream, else use fallback or skip
-        if 'P_emaildomain' in df.columns:
-             email_risk = df.groupby('P_emaildomain')[fraud_col].mean().reset_index()
-             email_risk = email_risk.sort_values(fraud_col, ascending=True).tail(10)
-             
-             fig_email = px.bar(email_risk, y='P_emaildomain', x=fraud_col, orientation='h', 
-                           color=fraud_col, color_continuous_scale='Reds')
-             fig_email = apply_plot_style(fig_email, title="Risk by Email Domain")
-             st.plotly_chart(fig_email, use_container_width=True)
+        if 'card4' in recent_df.columns:
+
+            df_clean = recent_df.copy()
+            df_clean['card4'] = df_clean['card4'].fillna("Unknown")
+            
+            card_perf = df_clean.groupby('card4').agg({
+                'TransactionAmt': 'sum'
+            }).reset_index()
+            card_perf.columns = ['Network', 'Total Value']
+            
+            fig_card = px.pie(
+                card_perf, values='Total Value', names='Network', 
+                title="Value Distribution by Network",
+                hole=0.4, 
+                color_discrete_sequence=px.colors.sequential.GnBu
+            )
+            fig_card = apply_plot_style(fig_card, "")
+
+            st.plotly_chart(fig_card, width='stretch')
         else:
-            # Mocking this specific chart if data is missing, as per original dashboard intent
-            email_data = pd.DataFrame({
-                'Domain': ['Proton', 'TempMail', 'Gmail', 'Yahoo', 'Corporate'], 
-                'Risk_Rate': [0.85, 0.95, 0.02, 0.03, 0.01]
-            }).sort_values('Risk_Rate')
-            
-            fig_email = px.bar(email_data, y='Domain', x='Risk_Rate', orientation='h', 
-                            color='Risk_Rate', color_continuous_scale='Reds')
-            fig_email = apply_plot_style(fig_email, title="Risk by Email Domain (Global Stats)")
-            st.plotly_chart(fig_email, use_container_width=True)
-        
-    st.markdown("<br>", unsafe_allow_html=True)
+            st.warning("Card Network data not available.")
+
+# ==============================================================================
+# MAIN RENDERER
+# ==============================================================================
+def render_page(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: dict, curve_df: pd.DataFrame):
+    render_header("Strategy Center", "Threshold Optimization & Rule Performance")
     
-    # --- NETWORK GRAPH (FRAUD RINGS) ---
-    try:
-        # Simulated Network Graph
-        # In a real app, this would use data from df where 'C13' or 'device_id' match
-        G = nx.Graph()
-        center = "Bad_Actor_X"
-        G.add_node(center, type='User')
-        for i in range(5):
-            ip = f"Device_{i}" 
-            G.add_node(ip, type='Device')
-            G.add_edge(center, ip)
-            linked = f"User_{i}" 
-            G.add_node(linked, type='User')
-            G.add_edge(ip, linked)
-            
-        pos = nx.spring_layout(G, seed=42)
-        edge_x, edge_y = [], []
-        for edge in G.edges():
-            x0, y0 = pos[edge[0]]; x1, y1 = pos[edge[1]]
-            edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
-            
-        edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.5, color='#888'), hoverinfo='none', mode='lines')
-        node_x, node_y, node_color, node_text = [], [], [], []
-        
-        for node in G.nodes():
-            node_x.append(pos[node][0])
-            node_y.append(pos[node][1])
-            node_text.append(node)
-            if node == center: node_color.append(COLORS['danger'])
-            elif "Device" in node: node_color.append(COLORS['warning'])
-            else: node_color.append(COLORS['neutral'])
-            
-        node_trace = go.Scatter(x=node_x, y=node_y, mode='markers', hoverinfo='text', text=node_text, 
-                                marker=dict(showscale=False, color=node_color, size=20))
-                                
-        fig_net = go.Figure(data=[edge_trace, node_trace])
-        fig_net = apply_plot_style(fig_net, title="Fraud Ring Analysis (Linked via C13/Device)")
-        fig_net.update_layout(xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), 
-                              yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
-        st.plotly_chart(fig_net, use_container_width=True)
-    except Exception as e:
-        st.error(f"Could not render Network Graph: {e}")
+    current_t = metrics.get('threshold', 0.5)
+
+    _render_conversion_kpis(metrics, alerts_df)
+    
+    _render_cost_optimization(curve_df, current_t)
+
+    _render_rule_performance(recent_df)

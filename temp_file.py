@@ -1,3 +1,422 @@
+import os
+import sys
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.figure_factory as ff
+
+# Ensure imports work from parent directory
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from styles import COLORS, kpi_card, apply_plot_style, render_header
+from config import StandardColumns
+
+# ==============================================================================
+# ROW 1: MODEL EFFICACY (The "Truth" Layer)
+# ==============================================================================
+def _render_efficacy_kpi_row(metrics: dict):
+    """
+    Displays high-level statistical health.
+    """
+    st.markdown("### 📉 Model Efficacy")
+    c1, c2, c3, c4 = st.columns(4)
+    
+    with c1:
+        # Precision: TP / (TP + FP)
+        # Low precision = High "Insult Rate" (Customer Friction)
+        val = metrics.get('precision', 0.88)
+        st.markdown(kpi_card(
+            "Precision", 
+            f"{val:.1%}", 
+            "Trustworthiness of Alerts", 
+            COLORS['safe']
+        ), unsafe_allow_html=True)
+    
+    with c2:
+        # Recall: TP / (TP + FN)
+        # Low recall = High Financial Loss
+        val = metrics.get('recall', 0.76)
+        st.markdown(kpi_card(
+            "Recall", 
+            f"{val:.1%}", 
+            "Fraud Catch Rate", 
+            COLORS['highlight']
+        ), unsafe_allow_html=True)
+    
+    with c3:
+        # F1 Score: Harmonic Mean
+        val = metrics.get('f1_score', 0.81)
+        st.markdown(kpi_card(
+            "F1-Score", 
+            f"{val:.2f}", 
+            "Overall Balance", 
+            COLORS['neutral']
+        ), unsafe_allow_html=True)
+        
+    with c4:
+        # Inference Latency
+        # Must be < 200ms for real-time auth
+        val = metrics.get('live_latency_ms', 45)
+        color = COLORS['safe'] if val < 100 else COLORS['danger']
+        st.markdown(kpi_card(
+            "Avg Latency", 
+            f"{val:.0f}ms", 
+            "API Response Time", 
+            color
+        ), unsafe_allow_html=True)
+
+    st.markdown("---")
+
+
+# ==============================================================================
+# ROW 2: STABILITY & CALIBRATION (The "Consistency" Layer)
+# ==============================================================================
+def _render_stability_row(recent_df: pd.DataFrame, metrics: dict):
+    """
+    Scientific analysis of model outputs (Density & Calibration).
+    """
+    c1, c2 = st.columns([2, 1])
+
+    # --- CHART 1: Probability Density (KDE) ---
+    with c1:
+        st.subheader("🧠 Score Distribution (Density)")
+        if not recent_df.empty and 'score' in recent_df.columns:
+            hist_data = [recent_df['score'].values]
+            group_labels = ['Model Confidence'] 
+            
+            try:
+                fig_dist = ff.create_distplot(
+                    hist_data, group_labels, 
+                    bin_size=.025, 
+                    colors=[COLORS['highlight']],
+                    show_rug=True,
+                    show_curve=True
+                )
+            except: 
+                fig_dist = px.histogram(recent_df, x='score', nbins=50)
+
+            # Add Threshold Line
+            threshold = metrics.get('threshold', 0.5)
+            fig_dist.add_vline(x=threshold, line_dash="dash", line_color=COLORS['danger'], annotation_text="Active Threshold")
+
+            fig_dist = apply_plot_style(fig_dist, title="")
+            fig_dist.update_layout(
+                xaxis_title="Risk Score (0.0 = Safe, 1.0 = Fraud)",
+                yaxis_title="Density",
+                showlegend=False,
+                margin=dict(t=20, b=20)
+            )
+            st.plotly_chart(fig_dist, width='stretch')
+            
+            st.caption("💡 **Interpretation:** A healthy model is 'polarized' (peaks at 0 and 1). A growing hump near 0.5 indicates model confusion/drift.")
+        else:
+            st.info("Waiting for inference data...")
+
+    # --- CHART 2: Calibration Curve ---
+    with c2:
+        st.subheader("🎯 Calibration")
+        #TODO: Replace with real calibration data from metrics when available
+        
+        # Mocking a Reliability Diagram
+        # X = Predicted Prob, Y = Actual Fraction of Fraud
+        x_axis = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        y_perfect = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        y_model =   [0.01, 0.15, 0.35, 0.65, 0.88, 0.99] # Slightly over/under confident
+
+        fig_cal = go.Figure()
+        
+        # Perfect Calibration (Reference)
+        fig_cal.add_trace(go.Scatter(
+            x=x_axis, y=y_perfect,
+            mode='lines',
+            line=dict(color='gray', dash='dash'),
+            name='Perfectly Calibrated'
+        ))
+
+        # Actual Model Performance
+        fig_cal.add_trace(go.Scatter(
+            x=x_axis, y=y_model,
+            mode='lines+markers',
+            line=dict(color=COLORS['safe'], width=3),
+            marker=dict(size=8),
+            name='Current Model'
+        ))
+
+        fig_cal = apply_plot_style(fig_cal, title="")
+        fig_cal.update_layout(
+            xaxis_title="Predicted Probability",
+            yaxis_title="Actual Fraud Rate",
+            height=300,
+            showlegend=True,
+            legend=dict(x=0, y=1, bgcolor='rgba(0,0,0,0)')
+        )
+        st.plotly_chart(fig_cal, width='stretch')
+        
+        st.caption("💡 **Interpretation:** If the green line is **above** the dashed line, the model is 'Underconfident'. If below, it is 'Overconfident'.")
+
+    st.markdown("---")
+
+
+# ==============================================================================
+# ROW 3: THRESHOLD STRATEGY SIMULATOR (The "Tool")
+# ==============================================================================
+def _render_threshold_simulator(lookup_table: dict, current_metrics: dict):
+    """
+    Interactive tool using TRUE historical data to simulate impact.
+    """
+    st.subheader("🎛️ Threshold Strategy Simulator")
+    
+    # Get baseline values for delta calculation
+    baseline_p = current_metrics.get('precision', 0.88)
+    baseline_r = current_metrics.get('recall', 0.76)
+
+    col_input, col_kpi = st.columns([1, 3])
+    
+    with col_input:
+        st.markdown("<br>", unsafe_allow_html=True)
+        sim_threshold = st.slider(
+            "Simulate Risk Threshold", 
+            min_value=0.0, max_value=1.0, value=0.5, step=0.01, # Finer steps
+            help="Adjust to see how the model WOULD HAVE performed on this data."
+        )
+    
+    with col_kpi:
+        # We find the key in the dict closest to the slider value
+        t_key = f"{sim_threshold:.2f}"
+        
+        if t_key in lookup_table:
+            data = lookup_table[t_key]
+            sim_prec = data['p']
+            sim_rec = data['r']
+            sim_insult = data['insult']
+            
+            k1, k2, k3 = st.columns(3)
+            with k1:
+                st.metric(
+                    "Proj. Precision", 
+                    f"{sim_prec:.1%}", 
+                    delta=f"{(sim_prec - baseline_p):.1%}"
+                )
+            with k2:
+                st.metric(
+                    "Proj. Recall", 
+                    f"{sim_rec:.1%}", 
+                    delta=f"{(sim_rec - baseline_r):.1%}", 
+                    delta_color="inverse"
+                )
+            with k3:
+                # Color the delta red if friction increases
+                st.metric(
+                    "Customer Insult Rate", 
+                    f"{sim_insult:.2%}", 
+                    help="% of Legitimate Customers who would have been blocked.",
+                    delta="Friction" if sim_insult > 0.05 else "Smooth"
+                )
+        else:
+            st.warning("Simulation data for this threshold is not yet computed.")
+
+    st.markdown("---")
+
+# ==============================================================================
+# ROW 4: FEATURE HEALTH (The "Diagnosis" Layer)
+# ==============================================================================
+def _render_feature_analysis_row(explain_df: pd.DataFrame, drift_dict: dict):
+    """
+    Combines Model Sensitivity (SHAP) and Data Drift (PSI) into a single row.
+    """
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        st.subheader("🔑 Global Feature Importance")
+        
+        if explain_df.empty:
+            st.info("ℹ️ Waiting for SHAP importance data...")
+        else:
+            df_plot = explain_df.sort_values(by='Importance', ascending=True).tail(15)
+            
+            fig_feat = go.Figure(go.Bar(
+                x=df_plot['Importance'],
+                y=df_plot['Feature'],
+                orientation='h',
+                marker_color=COLORS['text'],
+                opacity=0.8,
+                text=df_plot['Importance'].apply(lambda x: f"{x:.3f}"),
+                textposition='outside'
+            ))
+            
+            fig_feat = apply_plot_style(fig_feat, title="")
+            fig_feat.update_layout(
+                height=400, 
+                margin=dict(l=0, r=40, t=10, b=0),
+                xaxis_title="Avg Absolute SHAP Value"
+            )
+            st.plotly_chart(fig_feat, width='stretch')
+            st.caption("Top factors currently driving model decisions.")
+
+    # --- COLUMN 2: Data Drift (PSI) ---
+    with c2:
+        st.subheader("⚠️ Feature Drift (PSI)")
+        
+        if not drift_dict:
+            st.info("ℹ️ No drift data available. Waiting for Metrics Worker...")
+        else:
+            df_drift = pd.DataFrame(list(drift_dict.items()), columns=['Feature', 'PSI'])
+            
+            df_drift = df_drift.sort_values(by='PSI', ascending=True).tail(15)
+
+            colors = [
+                COLORS['danger'] if x > 0.2 else COLORS['warning'] if x > 0.1 else COLORS['safe'] 
+                for x in df_drift['PSI']
+            ]
+            
+            fig_drift = go.Figure(go.Bar(
+                x=df_drift['PSI'],
+                y=df_drift['Feature'],
+                orientation='h',
+                marker_color=colors,
+                text=df_drift['PSI'].apply(lambda x: f"{x:.3f}"),
+                textposition='auto'
+            ))
+            
+            fig_drift.add_vline(x=0.2, line_dash="dot", line_color=COLORS['danger'], 
+                                annotation_text="Critical Drift")
+            
+            fig_drift = apply_plot_style(fig_drift, title="")
+            fig_drift.update_layout(
+                height=400, 
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis_title="PSI Score"
+            )
+            st.plotly_chart(fig_drift, width='stretch')
+            st.caption("Measures if live data has shifted from training baseline.")
+
+# ==============================================================================
+# MAIN PAGE CONTROLLER
+# ==============================================================================
+def render_page(recent_df: pd.DataFrame, explain_df: pd.DataFrame, metrics: dict, drift_dict: dict, lookup_table: dict):
+    render_header("ML Monitor", "Model Performance, Drift & Calibration")
+
+    # 1. Efficacy (KPIs)
+    _render_efficacy_kpi_row(metrics)
+    
+    # 2. Stability (Plots)
+    _render_stability_row(recent_df, metrics)       
+    
+    # 3. Strategy (Simulator)
+    _render_threshold_simulator(lookup_table, metrics)
+    
+    # 4. Diagnosis (Features)
+    #_render_feature_health(explain_df)
+    _render_feature_analysis_row(explain_df, drift_dict)
+
+    # 5. Raw Logs
+    with st.expander("📝 View Raw Inference Logs"):
+        if not recent_df.empty:
+            st.dataframe(
+                recent_df[['timestamp', 'transaction_id', 'score', 'TransactionAmt']].head(50), 
+                width='stretch'
+            )
+        else:
+            st.info("No inference logs available.")
+
+
+# def _render_threshold_simulator():
+#     """
+#     Interactive tool to simulate business impact of threshold changes.
+#     """
+#     st.subheader("🎛️ Threshold Strategy Simulator")
+    
+#     col_input, col_kpi = st.columns([1, 3])
+    
+#     with col_input:
+#         st.markdown("<br>", unsafe_allow_html=True)
+#         sim_threshold = st.slider(
+#             "Simulate Risk Threshold", 
+#             min_value=0.0, max_value=1.0, value=0.5, step=0.05,
+#             help="Adjust to see impact on Precision vs. Recall"
+#         )
+    
+#     with col_kpi:
+#         # Mock Simulation Logic (Standard Precision-Recall Trade-off)
+#         # T increases -> Precision Increases, Recall Decreases, Insults Decrease
+#         sim_prec = min(0.99, 0.5 + (sim_threshold * 0.45))
+#         sim_rec = max(0.1, 0.95 - (sim_threshold * 0.8))
+        
+#         # Insult Rate: (False Positives / Total Legitimate)
+#         # Decreases exponentially as threshold rises
+#         sim_insult = max(0.001, 0.05 * (1 - sim_threshold)**2)
+
+#         k1, k2, k3 = st.columns(3)
+#         with k1:
+#             st.metric("Proj. Precision", f"{sim_prec:.1%}", delta=f"{(sim_prec-0.88)*100:.1f}%")
+#         with k2:
+#             st.metric("Proj. Recall", f"{sim_rec:.1%}", delta=f"{(sim_rec-0.76)*100:.1f}%", delta_color="inverse")
+#         with k3:
+#             # Highlight this metric as it's critical for business
+#             st.metric(
+#                 "Customer Insult Rate", 
+#                 f"{sim_insult:.2%}", 
+#                 help="% of Legitimate Customers who will get blocked.",
+#                 delta=" Friction" if sim_insult > 0.02 else " Smooth"
+#             )
+
+#     st.markdown("---")
+
+def _render_feature_health(explain_df: pd.DataFrame):
+    """
+    Global Feature Importance & Drift Detection (PSI).
+    """
+    c1, c2 = st.columns(2)
+    
+    # --- CHART 1: Feature Importance (SHAP) ---
+    with c1:
+        df_plot = explain_df.sort_values(by='Importance', ascending=True)
+        st.subheader("🔑 Global Feature Importance")
+        # Mock Data: Represents SHAP values (contribution to fraud score)        
+        fig_feat = go.Figure(go.Bar(
+            x=df_plot['Importance'],
+            y=df_plot['Feature'],
+            orientation='h',
+            marker_color=COLORS['text'],
+            opacity=0.8
+        ))
+        fig_feat = apply_plot_style(fig_feat, title="")
+        fig_feat.update_layout(height=350, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig_feat, width='stretch')
+        st.caption("Top factors driving the model's decisions right now.")
+
+    # --- CHART 2: Data Drift (PSI) ---
+    with c2:
+        st.subheader("⚠️ Feature Drift (PSI)")
+        # Mock PSI Data: >0.2 is Critical Drift, >0.1 is Warning
+        drift_data = pd.DataFrame({
+            'Feature': ['TransactionAmt', 'P_emaildomain', 'DeviceType', 'card4', 'dist_from_home'],
+            'PSI': [0.05, 0.28, 0.02, 0.12, 0.01] 
+        })
+        
+        # Color Logic
+        colors = [
+            COLORS['danger'] if x > 0.2 else COLORS['warning'] if x > 0.1 else COLORS['safe'] 
+            for x in drift_data['PSI']
+        ]
+        
+        fig_drift = go.Figure(go.Bar(
+            x=drift_data['Feature'],
+            y=drift_data['PSI'],
+            marker_color=colors
+        ))
+        
+        # Critical Threshold Line
+        fig_drift.add_hline(y=0.2, line_dash="dot", line_color=COLORS['danger'], annotation_text="Critical Drift (>0.2)")
+        
+        fig_drift = apply_plot_style(fig_drift, title="")
+        fig_drift.update_layout(height=350, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig_drift, width='stretch')
+        st.caption("Measures if live data distribution has shifted from training data. High PSI = Retraining needed.")
+
+
 def sync_data(self):
         """Chronologically syncs new data from Redis into local RAM."""
         current_len = self.r.llen('stats:hist_y_prob') 

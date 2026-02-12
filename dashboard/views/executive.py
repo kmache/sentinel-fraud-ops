@@ -7,16 +7,13 @@ import numpy as np
 import pandas as pd
 from plotly.subplots import make_subplots
 
-# Ensure imports work from parent directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from styles import COLORS, kpi_card, apply_plot_style, render_header
-from config import StandardColumns
 
 # ==============================================================================
 # 1. COMPONENT FUNCTIONS (The "Rows")
 # ==============================================================================
-
 def _render_kpi_row(metrics: dict):
     """Simplified KPI row with 4 business-focused metrics"""
     c1, c2, c3, c4 = st.columns(4)
@@ -60,8 +57,6 @@ def _render_kpi_row(metrics: dict):
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-
-
 def _render_financial_chart(timeseries_df: pd.DataFrame):
     """Renders the Cumulative Savings vs Loss chart."""
     if timeseries_df.empty or 'timestamp' not in timeseries_df.columns:
@@ -70,10 +65,8 @@ def _render_financial_chart(timeseries_df: pd.DataFrame):
 
     df = timeseries_df.sort_values('timestamp')
     
-    # Create figure with secondary y-axis
     fig_fin = make_subplots(specs=[[{"secondary_y": True}]])
     
-    # 1. Cumulative Savings
     fig_fin.add_trace(go.Scatter(
         x=df['timestamp'], 
         y=df['cumulative_savings'], 
@@ -81,8 +74,7 @@ def _render_financial_chart(timeseries_df: pd.DataFrame):
         fill='tozeroy', 
         line=dict(color=COLORS['safe'])
     ), secondary_y=False)
-    
-    # 2. Cumulative Loss
+
     fig_fin.add_trace(go.Scatter(
         x=df['timestamp'], 
         y=df['cumulative_loss'], 
@@ -90,23 +82,19 @@ def _render_financial_chart(timeseries_df: pd.DataFrame):
         line=dict(color=COLORS['danger'], dash='dot')
     ), secondary_y=True)
 
-    # Apply standard styles first
     fig_fin = apply_plot_style(fig_fin, title="Cumulative Value vs. Realized Loss")
     
-    # --- CUSTOM LAYOUT OPTIMIZATION ---
     fig_fin.update_layout(
-        # Move Legend INSIDE the chart (Top Left)
         legend=dict(
             yanchor="top",
-            y=0.99,            # 99% from the bottom (near top)
+            y=0.99,            
             xanchor="left",
-            x=0.01,            # 1% from the left
-            bgcolor="rgba(0,0,0,0)", # Transparent background
+            x=0.01,            
+            bgcolor="rgba(0,0,0,0)", 
             bordercolor="rgba(0,0,0,0)"
         ),
-        # Reduce whitespace around the chart
         margin=dict(l=10, r=10, t=40, b=10),
-        hovermode="x unified" # Shows both values when hovering over a timestamp
+        hovermode="x unified"
     )
 
     fig_fin.update_yaxes(title_text="Savings ($)", secondary_y=False)
@@ -119,28 +107,23 @@ def _render_financial_chart(timeseries_df: pd.DataFrame):
 def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd.DataFrame):
     """Renders the bottom row: Fraud Composition and Sensitivity Curve."""
     c1, c2 = st.columns(2)
-    
-    # --- CHART 1: Fraud Composition ---
     with c1:
         fraud_col = 'is_fraud' 
         amt_col = 'TransactionAmt'
         
-        # CHANGED: Added 'card4' to the hierarchy
         path_cols = ['ProductCD', 'card4', 'DeviceType']
         
         if not recent_df.empty and fraud_col in recent_df.columns:
             fraud_only = recent_df[recent_df[fraud_col] == 1].copy()
             
-            # Dynamic cleaning for all columns in the path
             for col in path_cols:
                 if col in fraud_only.columns:
-                    # Clean up card strings (e.g., 'mastercard' -> 'Mastercard') for better visuals
+
                     if col == 'card4':
                         fraud_only[col] = fraud_only[col].str.capitalize()
                     
                     fraud_only[col] = fraud_only[col].fillna("Unknown").replace("", "Unknown")
-            
-            # Only use columns that actually exist in the dataframe
+
             available_path = [c for c in path_cols if c in fraud_only.columns]
             
             if not fraud_only.empty and available_path:
@@ -158,7 +141,6 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
                 )
 
                 fig_sun.update_layout(
-                    # --- CENTRALIZE TITLE (Updated to reflect Card) ---
                     title={
                         'text': "Fraud: Product > Card > Device",
                         'y': 0.95,
@@ -182,14 +164,10 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
                     font=dict(size=12, color=COLORS.get('highlight', '#00e676')),
                     align="center"
                 )
+                st.plotly_chart(fig_sun, width='stretch')
                 
-                # CHANGED: Fixed deprecated param 'width' to 'use_container_width'
-                st.plotly_chart(fig_sun, use_container_width=True)
-                
-                # --- CENTRALIZE CAPTION ---
                 if 'ProductCD' in fraud_only.columns:
                     top_p = fraud_only.groupby('ProductCD')[amt_col].sum().idxmax()
-                    # Optional: Add top card to insight
                     insight_text = f"Most fraud volume is concentrated in <b>{top_p}</b> transactions."
                     if 'card4' in fraud_only.columns:
                         top_c = fraud_only.groupby('card4')[amt_col].sum().idxmax()
@@ -208,13 +186,11 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
         else:
             st.warning("⚠️ Classification data (is_fraud) not found.")
 
-    # --- CHART 2: Sensitivity Curve ---
     with c2:
         if curve_df.empty:
             st.info("Calculating threshold optimization curve...")
         else:
             fig_curve = go.Figure()
-            # 1. The Cost Curve
             fig_curve.add_trace(go.Scatter(
                 x=curve_df['threshold'], 
                 y=curve_df['total_loss'], 
@@ -222,9 +198,6 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
                 line=dict(color=COLORS['highlight'], width=3)
             ))
 
-            # 2. Add the Diamond marker at the CURRENT threshold
-            # We find the y-value (loss) closest to our current threshold
-            # to place the marker exactly on the line
             idx = (curve_df['threshold'] - threshold).abs().idxmin()
             current_loss = curve_df.loc[idx, 'total_loss']
             fig_curve.add_trace(go.Scatter(
@@ -243,11 +216,9 @@ def _render_analysis_row(recent_df: pd.DataFrame, threshold: float, curve_df: pd
             )
             st.plotly_chart(fig_curve, width='stretch', key="threshold_curve")
 
-
 # ==============================================================================
 # 2. MAIN RENDER FUNCTION
 # ==============================================================================
-
 def render_page(recent_df: pd.DataFrame, metrics: dict, threshold: float, timeseries_df: pd.DataFrame, curve_df:pd.DataFrame):
     """
     Main controller for the Executive View.
@@ -259,8 +230,7 @@ def render_page(recent_df: pd.DataFrame, metrics: dict, threshold: float, timese
     else:
         st.warning("⚠️ No metrics available yet.")
 
-    # Pass the specialized timeseries dataframe here
     _render_financial_chart(timeseries_df)
 
-    # Pass the recent transactions for composition analysis
     _render_analysis_row(recent_df, threshold, curve_df)
+    

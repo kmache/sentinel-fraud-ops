@@ -6,7 +6,6 @@ import traceback
 import pandas as pd
 import streamlit as st
 
-# Add parent directory to path to allow imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from styles import setup_page, COLORS, render_top_banner
@@ -26,7 +25,6 @@ if 'api_client' not in st.session_state:
 if 'is_paused' not in st.session_state:
     st.session_state.is_paused = False
 
-# Initialize Cache
 if 'last_stats' not in st.session_state: st.session_state.last_stats = {}
 if 'last_df' not in st.session_state: st.session_state.last_df = pd.DataFrame()
 
@@ -40,23 +38,31 @@ with st.sidebar:
     st.caption("Real-time Fraud Detection System")
     st.markdown("---")
     
-    # 2.1 Navigation
+    PAGES = ["Executive View", "Ops Center", "ML Monitor", "Strategy", "Forensics"]
+    
+    if "page" in st.query_params:
+        url_page = st.query_params["page"]
+        if url_page in PAGES:
+            st.session_state.current_page = url_page
+
+    def update_url():
+        st.query_params["page"] = st.session_state.current_page
+
     page = st.radio(
         "MODULES", 
-        ["Executive View", "Ops Center", "ML Monitor", "Strategy", "Forensics"],
-        index=0
+        PAGES,
+        key="current_page", 
+        on_change=update_url
     )
     
     st.markdown("---")
     
-    # 2.2 Preferences
     with st.expander("⚙️ View Settings", expanded=True):
         refresh_rate = st.slider("Refresh Rate (s)", 1, 60, 5)
         data_limit = st.select_slider("History Depth", options=[100, 500, 1000, 2000], value=500)
     
     st.markdown("---")
 
-    # 2.3 Live Control
     c1, c2 = st.columns(2)
     with c1:
         if st.button("⏸ PAUSE" if not st.session_state.is_paused else "▶ RESUME"):
@@ -74,13 +80,11 @@ with st.sidebar:
     else:
         st.success("🟢 Feed Active")
 
-    # 2.4 Backend Status
     st.markdown("---")
     try:
-        # Use the lightweight health check
+
         if client.get_system_health():
             st.caption("🟢 Backend: Online")
-            # Only fetch metrics if backend is alive
             sys_metrics = client.get_system_metrics()
             cpu = sys_metrics.get('cpu_usage_percent', 0)
             mem = sys_metrics.get('memory_usage_mb', 0)
@@ -106,6 +110,10 @@ def load_data(limit):
             st.session_state.get('last_series', pd.DataFrame()),
             st.session_state.get('last_curve', pd.DataFrame()),
             st.session_state.get('last_alert', pd.DataFrame()),
+            st.session_state.get('last_explain', pd.DataFrame()),
+            st.session_state.get('last_drift', {}),
+            st.session_state.get('last_lookup', {}),
+            st.session_state.get('last_calibration', {})
         )
 
     try:
@@ -115,14 +123,23 @@ def load_data(limit):
         timeseries = client.get_financial_timeseries()
         curve_df = client.get_threshold_optimization_curve()
         alerts_df = client.get_alerts(limit=100)
+        explain_df = client.get_global_feature_importance()
+        drift_dict = client.get_feature_drift_report()
+        look_up_table = client.get_performance_lookup()
+        calibration_data = client.get_calibration_report()
         
         # 3. Update Cache
         st.session_state.last_stats = stats
         st.session_state.last_df = df
         st.session_state.last_series = timeseries
+        st.session_state.last_explain = explain_df
         st.session_state.last_curve = curve_df
+        st.session_state.last_drift = drift_dict
+        st.session_state.last_alert = alerts_df
+        st.session_state.last_lookup = look_up_table
+        st.session_state.last_calibration = calibration_data
         
-        return stats, df, timeseries, curve_df, alerts_df
+        return stats, df, timeseries, curve_df, alerts_df, explain_df, drift_dict, look_up_table, calibration_data
 
     except Exception as e:
         logger.error(f"Data Fetch Error: {e}")
@@ -131,7 +148,12 @@ def load_data(limit):
             st.session_state.get('last_stats', {}),
             st.session_state.get('last_df', pd.DataFrame()),
             st.session_state.get('last_series', pd.DataFrame()),
-            st.session_state.get('last_curve', pd.DataFrame())
+            st.session_state.get('last_curve', pd.DataFrame()),
+            st.session_state.get('last_alert', pd.DataFrame()),
+            st.session_state.get('last_explain', pd.DataFrame()),
+            st.session_state.get('last_drift', {}),
+            st.session_state.get('last_lookup', {}),
+            st.session_state.get('last_calibration', {})
         )
 
 # ==============================================================================
@@ -139,11 +161,8 @@ def load_data(limit):
 # ==============================================================================
 def main():
     try:
-        #render_top_banner()
+        stats, df, timeseries_df, curve_df, alerts_df, explain_df, drift_dict, lookup_table, calibration_data = load_data(limit=data_limit)
 
-        stats, df, timeseries_df, curve_df, alerts_df = load_data(limit=data_limit)
-        
-        # Default threshold if not provided by backend
         current_threshold = stats.get('threshold', 0.5)
 
         if page == "Executive View":
@@ -163,21 +182,32 @@ def main():
             ) 
             
         elif page == "ML Monitor":
-            ml.load_view()
+            ml.render_page(
+            recent_df=df, 
+            explain_df=explain_df, 
+            metrics=stats, 
+            drift_dict=drift_dict, 
+            lookup_table=lookup_table,
+            calibration_data=calibration_data
+        )
             
         elif page == "Strategy":
-            strategy.load_view()
+            strategy.render_page(
+                recent_df=df,
+                alerts_df=alerts_df,
+                metrics=stats,
+                curve_df=curve_df
+            )
             
         elif page == "Forensics":
             forensics.load_view()
 
-        # Auto-refresh logic
         if not st.session_state.is_paused:
             time.sleep(refresh_rate)
             st.rerun()
 
     except Exception as e:
-        st.error("🚨 An unexpected error occurred in the dashboard controller.")
+        st.error(f"🚨 An unexpected error occurred in the dashboard controller: {e}")
         with st.expander("Technical Details"):
             st.code(traceback.format_exc())
 

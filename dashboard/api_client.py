@@ -1,5 +1,6 @@
 import requests
 import logging
+import json
 import pandas as pd
 from typing import Dict, Any, Optional, List
 from config import Endpoints, REQUEST_TIMEOUT
@@ -55,6 +56,33 @@ class SentinelClient:
         """
         url = Endpoints.build_url(Endpoints.STATS)
         return self._get(url) or {}
+    
+    def get_global_feature_importance(self, top_n: int = 10) -> pd.DataFrame:
+        """
+        Fetches the global feature importance data for the bar chart.
+        Endpoint: /exec/global-feature-importance
+        """
+        url = Endpoints.build_url(Endpoints.GLOBAL_FEATURE_IMPORTANCE)
+        data = self._get(url)
+
+        if not data:
+            return pd.DataFrame(columns=['Feature', 'Importance'])
+
+        try:
+            if isinstance(data, list):
+                df = pd.DataFrame(data)
+                if 'feature' in df.columns:
+                    df = df.rename(columns={'feature': 'Feature', 'importance': 'Importance'})
+            
+            elif isinstance(data, dict):
+                df = pd.DataFrame(list(data.items()), columns=['Feature', 'Importance'])
+            
+            return df.sort_values(by='Importance', ascending=False).head(top_n)
+        
+        except Exception as e:
+            logger.error(f"Error parsing feature importance: {e}")
+            return pd.DataFrame(columns=['Feature', 'Importance'])
+        
 
     def get_financial_timeseries(self) -> pd.DataFrame:
         """
@@ -111,7 +139,6 @@ class SentinelClient:
         Fetches the threshold vs. total loss data for the optimization plot.
         Endpoint: /exec/threshold-optimization
         """
-        # Ensure 'THRESHOLD_OPTIMIZATION' is defined in your Endpoints config
         url = Endpoints.build_url(Endpoints.THRESHOLD_OPTIMIZATION)
         data = self._get(url)
         
@@ -131,3 +158,21 @@ class SentinelClient:
         url = Endpoints.build_url(Endpoints.TRANSACTION_DETAIL, id=transaction_id)
         return self._get(url) or {}
     
+
+    def get_feature_drift_report(self) -> Dict[str, float]:
+        """
+        Fetches the latest feature drift report (PSI scores).
+        Endpoint: /exec/feature-drift
+        """
+        url = Endpoints.build_url(Endpoints.FEATURE_DRIFT)
+        return self._get(url) or {}
+    
+    def get_performance_lookup(self):
+        url = Endpoints.build_url(Endpoints.PERFORMANCE_LOOKUP)
+        return self._get(url) or {}
+    
+    def get_calibration_report(self):
+        url = Endpoints.build_url(Endpoints.CALIBRATION_DATA)
+        return self._get(url) or {}
+    
+

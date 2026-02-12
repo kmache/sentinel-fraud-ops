@@ -45,7 +45,7 @@ COLUMN_MAPPING: Dict[str, str] = {
     'card4':                StandardColumns.NETWORK,
     'P_emaildomain':        StandardColumns.EMAIL,
     'addr1':                StandardColumns.IP,
-    'ProductCD':            StandardColumns.PRODUCT, # <--- ENSURE MAPPING EXISTS
+    'ProductCD':            StandardColumns.PRODUCT,
     
     # Cleaned / Pydantic Schema
     'amount':               StandardColumns.AMOUNT,
@@ -94,6 +94,10 @@ class Endpoints:
     ALERTS = "/alerts"
     TRANSACTION_DETAIL = "/transactions/{id}"
     THRESHOLD_OPTIMIZATION = "/exec/threshold-optimization"
+    GLOBAL_FEATURE_IMPORTANCE = "/exec/global-feature-importance"
+    FEATURE_DRIFT = "/exec/feature-drift"
+    PERFORMANCE_LOOKUP = "/exec/performance-lookup"
+    CALIBRATION_DATA = "/exec/calibration"
     
     @classmethod
     def build_url(cls, endpoint: str, **params) -> str:
@@ -102,7 +106,5 @@ class Endpoints:
                 endpoint = endpoint.format(**params)
             except KeyError:
                 pass
-        return f"{BACKEND_URL}{endpoint}"
+        return f"{BACKEND_URL}{endpoint}" 
 
-
-        

@@ -6,11 +6,9 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime, timedelta
 
-# Ensure imports work from parent directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from styles import COLORS, apply_plot_style, render_header
-# Assuming kpi_card is available, or we use a similar HTML generator for Ops specific cards
 
 # ==============================================================================
 # 1. COMPONENT FUNCTIONS (The "Rows")
@@ -23,7 +21,6 @@ def _render_ops_kpis(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: 
     """
     c1, c2, c3, c4 = st.columns(4)
 
-    # 1. Active Alerts
     with c1:
         active_alerts = len(alerts_df) 
         color = COLORS['danger'] if active_alerts > 20 else COLORS['warning'] if active_alerts > 10 else COLORS['safe']
@@ -38,7 +35,6 @@ def _render_ops_kpis(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: 
         </div>
         """, unsafe_allow_html=True)
 
-    # 2. MTTR (Estimated)
     with c2:
         mttr = 0
         if not alerts_df.empty and 'timestamp' in alerts_df.columns:
@@ -57,12 +53,10 @@ def _render_ops_kpis(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: 
         </div>
         """, unsafe_allow_html=True)
 
-    # 3. Risk Velocity
     with c3:
         velocity = 0
         if not recent_df.empty and 'score' in recent_df.columns:
             high_risk_now = len(recent_df[recent_df['score'] > 0.8])
-            # Mocking "previous" as 80% of current for visual demo if no historic data passed
             velocity = int(high_risk_now * 0.1) 
         
         color = COLORS['highlight']
@@ -76,11 +70,9 @@ def _render_ops_kpis(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: 
         </div>
         """, unsafe_allow_html=True)
 
-    # 4. Auto-Block Ratio
     with c4:
         ratio = None
         if not recent_df.empty:
-            # Mock calculation if 'action' column exists, otherwise use threshold
             df_high_risk = recent_df[recent_df["action"].isin(["BLOCK"])] 
             total_high_risk = len(recent_df[recent_df['score'] > metrics.get('threshold', 0.5)])
             if total_high_risk > 0:
@@ -96,7 +88,6 @@ def _render_ops_kpis(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: 
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-
 def _render_alert_queue(alerts_df: pd.DataFrame):
     """
     Middle Row: The Interactive Alert Queue.
@@ -106,7 +97,6 @@ def _render_alert_queue(alerts_df: pd.DataFrame):
         st.subheader("📋 Priority Alert Queue")
     
     with col_tools:
-        # Mini toolbar
         c_a, c_b = st.columns(2)
         with c_a: st.button("✅ Approve All", width='stretch')
         with c_b: st.button("📥 Export", type="secondary", width='stretch')
@@ -115,52 +105,71 @@ def _render_alert_queue(alerts_df: pd.DataFrame):
         st.success("🎉 Queue is empty. No anomalies detected.")
         return
 
-    # Processing for display
     display_df = alerts_df.copy()
     display_df['timestamp'] = pd.to_datetime(display_df['timestamp'])
     
-    # Sort by Score
-    display_df = display_df.sort_values('score', ascending=False).head(50)
-    final_df = display_df[['timestamp', 'transaction_id', 'score', 'TransactionAmt', 'ProductCD', 'card4', 'P_emaildomain', 'action']].copy()
+    display_df = display_df.sort_values('score', ascending=False).head(50).reset_index(drop=True)
     
-    # Styling logic
+    final_df = display_df[['timestamp', 'transaction_id', 'score', 'TransactionAmt', 'ProductCD', 'card4', 'P_emaildomain']]
+
     def highlight_risk(val):
-        # Determine color
-        if val > 0.9: color = '#ff4b4b'      # Red
-        elif val > 0.7: color = '#ffa726'    # Orange
-        else: color = '#00e676'              # Green
+        if val > 0.9: color = '#ff4b4b'
+        elif val > 0.7: color = '#ffa726'
+        else: color = '#00e676'
         return f'color: {color}; font-weight: bold'
-    
+
     styled_df = final_df.style.map(highlight_risk, subset=['score'])
 
-    st.dataframe(
+    selection = st.dataframe(
         styled_df,
         column_config={
-            "timestamp": st.column_config.DatetimeColumn(
-                "Date & Time", 
-                format="YYYY-MM-DD HH:mm:ss",  # <--- CHANGED HERE
-                width="medium"
-            ),
+            "timestamp": st.column_config.DatetimeColumn("Date", format="YYYY-MM-DD HH:mm:ss"),
             "transaction_id": "ID",
-            "score": st.column_config.ProgressColumn(
-                "Risk Score", 
-                format="%.3f", 
-                min_value=0, 
-                max_value=1,
-                help="Model Confidence"
-            ),
+            "score": st.column_config.ProgressColumn("Risk Score", format="%.3f", min_value=0, max_value=1),
             "TransactionAmt": st.column_config.NumberColumn("Amount", format="$%.2f"),
             "ProductCD": "Product",
             "card4": "Card",
-            "P_emaildomain": "Email Domain",
-            "action": "Action Taken"
+            "P_emaildomain": "Email"
         },
         width='stretch',
         height=350,
-        hide_index=True
+        hide_index=True,
+        selection_mode="single-row",
+        on_select="rerun", 
+        key="alert_queue_table"
     )
-    st.markdown("<br>", unsafe_allow_html=True)
 
+    if len(selection.selection.rows) > 0:
+        selected_index = selection.selection.rows[0]
+        selected_row = final_df.iloc[selected_index]
+        tx_id = selected_row['transaction_id']
+        amt = selected_row['TransactionAmt']
+        
+        st.markdown(f"""
+        <div style="padding: 10px; border: 1px solid {COLORS['highlight']}; border-radius: 5px; background-color: {COLORS['card_bg']}; margin-top: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span>🎯 <b>Selected:</b> {tx_id} (${amt:,.2f})</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        c_investigate, c_approve, c_ignore = st.columns([1, 1, 2])
+        
+        with c_investigate:
+            if st.button("🕵️‍♂️ Investigate Case", type="primary", width='stretch'):
+                st.session_state['selected_case'] = tx_id
+                
+                st.session_state.nav_selection = "Forensics"
+                
+                st.query_params["page"] = "Forensics"
+                
+                st.rerun()
+        
+        with c_approve:
+            if st.button("✅ Quick Approve", width='stretch'):
+                st.toast(f"Transaction {tx_id} approved!", icon="✅")
+                
+    st.markdown("<br>", unsafe_allow_html=True)
 
 def _render_charts_row(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: dict):
     """
@@ -168,16 +177,13 @@ def _render_charts_row(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics
     """
     c1, c2 = st.columns(2)
 
-    # --- CHART 1: Risk Distribution (Histogram) ---
     with c1:
         if not recent_df.empty and 'score' in recent_df.columns:
             fig_hist = go.Figure()
             
-            # Create buckets
             counts, bins = pd.cut(recent_df['score'], bins=10, retbins=True)
             counts = counts.value_counts().sort_index()
             
-            # Color logic based on risk severity
             colors = [COLORS['safe'] if b.right < 0.5 else COLORS['warning'] if b.right < 0.85 else COLORS['danger'] for b in counts.index]
 
             fig_hist.add_trace(go.Bar(
@@ -198,7 +204,6 @@ def _render_charts_row(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics
         else:
             st.info("Waiting for transaction data...")
 
-    # --- CHART 2: Alert Volume (Hourly) ---
     with c2:
         if not alerts_df.empty and 'timestamp' in alerts_df.columns:
             alerts_df['hour'] = pd.to_datetime(alerts_df['timestamp']).dt.hour
@@ -229,22 +234,18 @@ def _render_charts_row(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics
 # ==============================================================================
 # 2. MAIN RENDER FUNCTION
 # ==============================================================================
-
 def render_page(recent_df: pd.DataFrame, alerts_df: pd.DataFrame, metrics: dict):
     """
     Main controller for the Ops Center.
     Matches the signature expected by app.py (if updated) or called similarly to executive.
     """
     render_header("Ops Center", "Real-time Monitoring & Alert Management")
-    
-    # 1. Top Row: KPIs
+
     if metrics:
         _render_ops_kpis(recent_df, alerts_df, metrics)
     else:
         st.warning("⚠️ No metrics available yet.")
-    
-    # 2. Middle Row: The Work Queue
+
     _render_alert_queue(alerts_df)
-    
-    # 3. Bottom Row: Analytics
+
     _render_charts_row(recent_df, alerts_df, metrics)

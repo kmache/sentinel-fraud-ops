@@ -24,7 +24,6 @@ def clean_dataframe(data) -> pd.DataFrame:
     2. Renames columns based on config.
     3. Enforces types (Timestamps).
     """
-    # 1. Convert to DataFrame if it's a list
     if isinstance(data, list):
         df = pd.DataFrame(data)
     else:
@@ -36,21 +35,16 @@ def clean_dataframe(data) -> pd.DataFrame:
     # Work on a copy
     cleaned = df.copy()
 
-    # 2. Apply mapping from config.py
-    # This looks at the columns in 'cleaned' and renames them if they exist in mapping
     rename_dict = {k: v for k, v in COLUMN_MAPPING.items() if k in cleaned.columns}
     cleaned = cleaned.rename(columns=rename_dict)
 
-    # 3. Ensure timestamp is a datetime object
     ts_col = StandardColumns.TIMESTAMP
     if ts_col in cleaned.columns:
         cleaned[ts_col] = pd.to_datetime(cleaned[ts_col], errors='coerce')
 
-    # 4. Fill NaNs for display safety
     if StandardColumns.SCORE in cleaned.columns:
         cleaned[StandardColumns.SCORE] = cleaned[StandardColumns.SCORE].fillna(0)
 
-    # Deduplicate and reset index
     cleaned = cleaned.loc[:, ~cleaned.columns.duplicated()]
     cleaned = cleaned.reset_index(drop=True)
 

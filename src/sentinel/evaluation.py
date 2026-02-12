@@ -3,6 +3,8 @@ from sklearn.metrics import (
     roc_auc_score, roc_curve, precision_recall_curve, 
     average_precision_score, confusion_matrix
 )
+from sklearn.calibration import calibration_curve
+
 from typing import Dict, Any, List, Union
 
 class SentinelEvaluator:
@@ -180,6 +182,7 @@ class SentinelEvaluator:
                 "recall": float(round(tp / (tp + fn + 1e-6), 4)),
                 "fpr_insult_rate": float(round(fp / (fp + tn + 1e-6), 4)),
                 "auc": float(round(self.get_auc(), 4)),
+                "f1_score": float(round(2 * (tp / (2*tp + fp + fn + 1e-6)), 4)),
                 "fraud_rate": float(round(100*np.array(self.y_true).sum()/len(self.y_true), 2))
             },
             "financials": {
@@ -194,6 +197,54 @@ class SentinelEvaluator:
                 "fp_count": int(fp),
                 "fn_count": int(fn)
             }
+        }
+
+    def get_simulation_table(self):
+        """
+        Computes Precision, Recall, and FPR for thresholds 0.0 to 1.0
+        """
+        thresholds = np.linspace(0, 1, 101) # 100 steps
+        sim_data = {}
+
+        for t in thresholds:
+            # Vectorized comparison
+            preds = (self.y_prob >= t).astype(int)
+            
+            tp = np.sum((preds == 1) & (self.y_true == 1))
+            fp = np.sum((preds == 1) & (self.y_true == 0))
+            fn = np.sum((preds == 0) & (self.y_true == 1))
+            tn = np.sum((preds == 0) & (self.y_true == 0))
+
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 1.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0 # This is the "Insult Rate"
+
+            # Round for JSON storage efficiency
+            sim_data[str(round(t, 2))] = {
+                "p": round(precision, 4),
+                "r": round(recall, 4),
+                "insult": round(fpr, 4)
+            }
+        return sim_data
+    
+    from sklearn.calibration import calibration_curve
+
+    def get_calibration_report(self):
+        """
+        Computes real calibration data (Reliability Diagram).
+        """
+        if len(self.y_true) < 10:  
+            return {}
+        prob_true, prob_pred = calibration_curve(
+            self.y_true, 
+            self.y_prob, 
+            n_bins=10, 
+            strategy='uniform'
+        )
+
+        return {
+            "prob_true": prob_true.tolist(),
+            "prob_pred": prob_pred.tolist()
         }
 
 if __name__ == "__main__":
