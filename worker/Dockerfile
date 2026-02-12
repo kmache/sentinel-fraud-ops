@@ -26,6 +26,7 @@ RUN uv pip install --system --no-cache -e .
 
 # 3. Copy Worker script
 COPY worker/processor.py .
+COPY worker/metrics.py .
 
 # Models are mounted via volume in docker-compose
 CMD ["python", "processor.py"]

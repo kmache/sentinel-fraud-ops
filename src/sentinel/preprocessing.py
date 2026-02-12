@@ -31,7 +31,7 @@ class SentinelPreprocessing(BaseEstimator, TransformerMixin):
         self._fitted = False
 
     def fit(self, X: pd.DataFrame, y: Union[str, pd.Series] = None):
-        if self.verbose: print("--- Fitting Sentinel Preprocessor ---")
+        if self.verbose: print("--- Fitting Sentinel Preprocessor ---✅done")
         
         # Identify columns that are almost entirely null
         nan_drops = [c for c in X.columns if X[c].isnull().mean() > 0.99]
@@ -39,17 +39,17 @@ class SentinelPreprocessing(BaseEstimator, TransformerMixin):
         if y is not None:
              nan_drops += self._identify_nan_drops(X, y)
              
-        # Deduplicate and save
+        # Deduplicate and save 
         self.cols_to_drop = list(set(nan_drops))
         
         if self.verbose: print(f"Dropped {len(self.cols_to_drop)} columns")
         self._fitted = True
         if self.verbose: print("--- Sentinel Preprocessor Fitted ---")
         return self
-
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+ 
+    def transform(self, X: pd.DataFrame, verbose:bool=True) -> pd.DataFrame:
         X = X.copy()
-        if self.verbose: print(f"--- Transforming {len(X)} rows ---")         
+        if verbose: print(f"--- Transforming {len(X)} rows --✅done")         
         
         # 1. Drop Empty Columns
         if self.cols_to_drop: 
@@ -405,28 +405,6 @@ class SentinelPreprocessing(BaseEstimator, TransformerMixin):
                     df[col] = df[col].astype(np.float32)
                     
         return df
-    
-
-    # def _reduce_memory_usage(self, df: pd.DataFrame) -> pd.DataFrame:
-    #     for col in df.columns:
-    #         col_type = df[col].dtype
-            
-    #         # Updated Check for Pandas 2.0 compatibility
-    #         if col_type == object or col_type.name == 'category' or col_type.name == 'string':
-    #             continue
-    #         if col_type != object and not isinstance(col_type, pd.CategoricalDtype):
-    #             c_min = df[col].min()
-    #             c_max = df[col].max()
-    #             if not pd.isna(c_min) and not pd.isna(c_max) and (df[col] % 1 == 0).all():
-    #                 if c_min >= 0:
-    #                     if c_max < 255: df[col] = df[col].astype(np.uint8)
-    #                     elif c_max < 4294967295: df[col] = df[col].astype(np.uint32)
-    #                 else:
-    #                     if c_min > -128 and c_max < 127: df[col] = df[col].astype(np.int8)
-    #                     elif c_min > -2147483648: df[col] = df[col].astype(np.int32)
-    #             else:
-    #                 df[col] = df[col].astype(np.float32)
-    #     return df
 
 if __name__ == "__main__":
     print("Sentinel Preprocessing Module")

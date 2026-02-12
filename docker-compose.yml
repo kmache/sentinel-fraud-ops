@@ -101,6 +101,24 @@ services:
       - fraud-network
     restart: always
 
+  metrics-worker:
+    build: 
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: sentinel-metrics
+    # This overrides the default CMD ["python", "processor.py"] in Dockerfile
+    command: python metrics.py
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=sentinel_pass_2024
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - fraud-network
+    restart: always
+
   producer:
     build: 
       context: ./simulator # Pointing to the folder containing simulator/Dockerfile

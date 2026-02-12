@@ -3,6 +3,8 @@ from sklearn.metrics import (
     roc_auc_score, roc_curve, precision_recall_curve, 
     average_precision_score, confusion_matrix
 )
+from sklearn.calibration import calibration_curve
+
 from typing import Dict, Any, List, Union
 
 class SentinelEvaluator:
@@ -97,6 +99,38 @@ class SentinelEvaluator:
         
         return 0.5
             
+    
+    def get_cost_curve(self, cost_params: dict = None):
+        """
+        Returns a JSON-serializable list of dicts for the threshold-loss plot.
+        """
+        # Default values if none provided
+        params = cost_params or {
+            'cb_fee': 25.0, 
+            'support_cost': 15.0, 
+            'churn_factor': 0.1
+        }
+        
+        curve = []
+        # 50 points is the standard for a smooth UI curve without heavy CPU usage
+        candidates = np.linspace(0.01, 0.99, 50) 
+        
+        for t in candidates:
+            preds = (self.y_prob >= t).astype(int)
+            fn_mask = (self.y_true == 1) & (preds == 0)
+            fp_mask = (self.y_true == 0) & (preds == 1)
+            
+            # Calculate Costs
+            fn_loss = self.amounts[fn_mask].sum() + (fn_mask.sum() * params['cb_fee'])
+            fp_loss = (fp_mask.sum() * params['support_cost']) + \
+                    (self.amounts[fp_mask].sum() * params['churn_factor'])
+            
+            curve.append({
+                "threshold": round(float(t), 3),
+                "total_loss": round(float(fn_loss + fp_loss), 2)
+            })
+            
+        return curve
 
     def get_tiered_strategy(self, soft_threshold: float, hard_threshold: float) -> np.ndarray:
         """
@@ -108,7 +142,7 @@ class SentinelEvaluator:
             (self.y_prob >= soft_threshold) & (self.y_prob < hard_threshold),
             self.y_prob >= hard_threshold
         ]
-        choices = ['APPROVE', 'CHALLENGE', 'BLOCK']
+        choices = ['APPROVE', 'REVIEW', 'BLOCK']
         
         # Default to BLOCK if edge cases arise
         return np.select(conditions, choices, default='BLOCK')
@@ -147,7 +181,9 @@ class SentinelEvaluator:
                 "precision": float(round(tp / (tp + fp + 1e-6), 4)),
                 "recall": float(round(tp / (tp + fn + 1e-6), 4)),
                 "fpr_insult_rate": float(round(fp / (fp + tn + 1e-6), 4)),
-                "auc": float(round(self.get_auc(), 4))
+                "auc": float(round(self.get_auc(), 4)),
+                "f1_score": float(round(2 * (tp / (2*tp + fp + fn + 1e-6)), 4)),
+                "fraud_rate": float(round(100*np.array(self.y_true).sum()/len(self.y_true), 2))
             },
             "financials": {
                 "fraud_stopped_val": float(round(fraud_caught_amt, 2)),
@@ -156,11 +192,59 @@ class SentinelEvaluator:
                 "net_savings": float(round(net_savings, 2)) 
             },
             "counts": {
-                "total_eval": int(len(self.y_true)),
+                "total_processed": int(len(self.y_true)),
                 "tp_count": int(tp),
                 "fp_count": int(fp),
                 "fn_count": int(fn)
             }
+        }
+
+    def get_simulation_table(self):
+        """
+        Computes Precision, Recall, and FPR for thresholds 0.0 to 1.0
+        """
+        thresholds = np.linspace(0, 1, 101) # 100 steps
+        sim_data = {}
+
+        for t in thresholds:
+            # Vectorized comparison
+            preds = (self.y_prob >= t).astype(int)
+            
+            tp = np.sum((preds == 1) & (self.y_true == 1))
+            fp = np.sum((preds == 1) & (self.y_true == 0))
+            fn = np.sum((preds == 0) & (self.y_true == 1))
+            tn = np.sum((preds == 0) & (self.y_true == 0))
+
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 1.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0 # This is the "Insult Rate"
+
+            # Round for JSON storage efficiency
+            sim_data[str(round(t, 2))] = {
+                "p": round(precision, 4),
+                "r": round(recall, 4),
+                "insult": round(fpr, 4)
+            }
+        return sim_data
+    
+    from sklearn.calibration import calibration_curve
+
+    def get_calibration_report(self):
+        """
+        Computes real calibration data (Reliability Diagram).
+        """
+        if len(self.y_true) < 10:  
+            return {}
+        prob_true, prob_pred = calibration_curve(
+            self.y_true, 
+            self.y_prob, 
+            n_bins=10, 
+            strategy='uniform'
+        )
+
+        return {
+            "prob_true": prob_true.tolist(),
+            "prob_pred": prob_pred.tolist()
         }
 
 if __name__ == "__main__":

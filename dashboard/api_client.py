@@ -1,149 +1,175 @@
-"""
-ROLE: API Client (Adapter)
-RESPONSIBILITIES:
-1.  Abstracts HTTP requests to the Backend Service.
-2.  Handles connection errors and timeouts gracefully.
-3.  Converts raw JSON responses into Pandas DataFrames for Streamlit.
-4.  Provides fallback data structures to prevent UI crashes.
-"""
-import os
 import requests
 import logging
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+from config import Endpoints, REQUEST_TIMEOUT
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
-# Default to 'backend' service name in Docker Compose network
-API_BASE_URL = os.getenv("BACKEND_URL", "http://backend:8000")
-REQUEST_TIMEOUT = 3
-
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ApiClient")
 
-class SentinelApiClient:
+class SentinelClient:
     """
-    Client for interacting with the Sentinel Fraud Ops Backend.
+    The Bridge: Fetches data from the Sentinel Backend (FastAPI).
+    converts JSON responses into Pandas DataFrames where appropriate.
     """
 
     def __init__(self):
-        self.base_url = API_BASE_URL
         self.session = requests.Session()
-        logger.info(f"🔌 API Client initialized pointing to: {self.base_url}")
+        logger.info(f"🔌 Sentinel Client Initialized")
 
-    def _get(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Any]:
-        """Internal helper to perform GET requests with error handling."""
+    def _get(self, url: str, params: Optional[Dict] = None) -> Optional[Any]:
+        """Internal helper for robust GET requests."""
         try:
-            url = f"{self.base_url}{endpoint}"
             response = self.session.get(url, params=params, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.ConnectionError:
-            # Suppress excessive logging for connection checks
-            if endpoint != "/health":
-                logger.error(f"❌ Connection Error: Could not reach {url}")
-            return None
-        except requests.exceptions.Timeout:
-            logger.warning(f"⏳ Timeout: Backend did not respond in {REQUEST_TIMEOUT}s")
+            logger.warning(f"⚠️ Connection Refused: {url}")
             return None
         except Exception as e:
-            logger.error(f"⚠️ API Error ({endpoint}): {e}")
+            logger.error(f"❌ API Error ({url}): {e}")
             return None
 
     # ==========================================================================
-    # SYSTEM HEALTH
+    # 1. SYSTEM HEALTH
     # ==========================================================================
-    def is_backend_alive(self) -> bool:
-        """Checks if the backend is reachable and Redis is connected."""
-        data = self._get("/health")
+    def get_system_health(self) -> bool:
+        """Checks if Backend + Redis are alive."""
+        url = Endpoints.build_url(Endpoints.HEALTH)
+        data = self._get(url)
         return data is not None and data.get("status") == "healthy"
 
     def get_system_metrics(self) -> Dict[str, Any]:
-        """Fetches CPU and Memory usage of the backend service."""
-        default = {"memory_usage_mb": 0, "cpu_usage_percent": 0, "redis_connected": False}
-        data = self._get("/metrics")
-        return data if data else default
+        """Fetches CPU/RAM usage."""
+        url = Endpoints.build_url(Endpoints.SYSTEM_METRICS)
+        return self._get(url) or {}
 
     # ==========================================================================
-    # DATA & STATISTICS
+    # 2. EXECUTIVE DASHBOARD (KPIs & Charts)
     # ==========================================================================
     def get_dashboard_stats(self) -> Dict[str, Any]:
         """
-        Fetches aggregated statistics (Fraud Rate, Total Count, etc.).
-        Returns zeroed-out dict on failure.
+        Fetches the Business Report (KPI Cards).
+        Endpoint: /stats
         """
-        default = {
-            "total_processed": 0,
-            "fraud_detected": 0,
-            "legit_transactions": 0,
-            "fraud_rate": 0.0,
-            "queue_depth": 0,
-            "updated_at": "N/A"
-        }
-        data = self._get("/stats")
-        return data if data else default
+        url = Endpoints.build_url(Endpoints.STATS)
+        return self._get(url) or {}
+    
+    def get_global_feature_importance(self, top_n: int = 10) -> pd.DataFrame:
+        """
+        Fetches the global feature importance data for the bar chart.
+        Endpoint: /exec/global-feature-importance
+        """
+        url = Endpoints.build_url(Endpoints.GLOBAL_FEATURE_IMPORTANCE)
+        data = self._get(url)
 
+        if not data:
+            return pd.DataFrame(columns=['Feature', 'Importance'])
+
+        try:
+            if isinstance(data, list):
+                df = pd.DataFrame(data)
+                if 'feature' in df.columns:
+                    df = df.rename(columns={'feature': 'Feature', 'importance': 'Importance'})
+            
+            elif isinstance(data, dict):
+                df = pd.DataFrame(list(data.items()), columns=['Feature', 'Importance'])
+            
+            return df.sort_values(by='Importance', ascending=False).head(top_n)
+        
+        except Exception as e:
+            logger.error(f"Error parsing feature importance: {e}")
+            return pd.DataFrame(columns=['Feature', 'Importance'])
+        
+
+    def get_financial_timeseries(self) -> pd.DataFrame:
+        """
+        Fetches data for the 'Savings over Time' chart.
+        Endpoint: /exec/series
+        """
+        url = Endpoints.build_url(Endpoints.TIMESERIES)
+        data = self._get(url)
+        
+        if not data:
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(data)
+        
+        try:
+            if "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+            return df
+        except Exception as e:
+            logger.error(f"Timestamp parsing error: {e}")
+            return pd.DataFrame()
+
+    # ==========================================================================
+    # 3. LIVE STREAMS & TABLES
+    # ==========================================================================
     def get_recent_transactions(self, limit: int = 20) -> pd.DataFrame:
         """
-        Fetches the latest transactions stream.
-        Returns: Pandas DataFrame suitable for Streamlit display.
+        Fetches the live stream of recent transactions.
+        Endpoint: /recent
         """
-        data = self._get("/recent", params={"limit": limit})
+        url = Endpoints.build_url(Endpoints.RECENT_TRANSACTIONS)
+        data = self._get(url, params={"limit": limit})
         
         if not data:
             return pd.DataFrame()
-
-        df = pd.DataFrame(data)
-        
-        # Data Formatting for UI
-        if not df.empty:
-            if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
             
-            # Reorder columns for readability if they exist
-            cols = ['timestamp', 'transaction_id', 'amount', 'score', 'is_fraud', 'action']
-            existing_cols = [c for c in cols if c in df.columns]
-            extra_cols = [c for c in df.columns if c not in cols]
-            df = df[existing_cols + extra_cols]
+        return pd.DataFrame(data)
 
-        return df
-
-    def get_fraud_alerts(self, limit: int = 10) -> pd.DataFrame:
+    def get_alerts(self, limit: int = 20) -> pd.DataFrame:
         """
-        Fetches only high-risk transactions (Fraud Alerts).
-        Returns: Pandas DataFrame.
+        Fetches only high-risk alerts.
+        Endpoint: /alerts
         """
-        data = self._get("/alerts", params={"limit": limit})
+        url = Endpoints.build_url(Endpoints.ALERTS)
+        data = self._get(url, params={"limit": limit})
         
         if not data:
             return pd.DataFrame()
-
-        df = pd.DataFrame(data)
-        if not df.empty and 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
             
-        return df
+        return pd.DataFrame(data)
 
-    # ==========================================================================
-    # MODEL PERFORMANCE & ROI
-    # ==========================================================================
-    def get_model_performance(self, threshold: Optional[float] = None) -> Dict[str, Any]:
+    def get_threshold_optimization_curve(self) -> pd.DataFrame:
         """
-        Fetches ROI metrics, Recall, and AUC.
-        If threshold is None, backend uses the production config.
+        Fetches the threshold vs. total loss data for the optimization plot.
+        Endpoint: /exec/threshold-optimization
         """
-        params = {}
-        if threshold is not None:
-            params['threshold'] = threshold
-
-        default = {
-            "metrics": {
-                "net_benefit": 0, "fraud_prevented": 0, "fraud_missed": 0,
-                "recall": 0, "auc": 0, "fp_ratio": 0
-            },
-            "meta": {"total": 0},
-            "config": {"source": "unknown", "threshold_used": 0.5}
-        }
+        url = Endpoints.build_url(Endpoints.THRESHOLD_OPTIMIZATION)
+        data = self._get(url)
         
-        data = self._get("/performance", params=params)
-        return data if data else default
+        if not data:
+            return pd.DataFrame()
+        
+        return pd.DataFrame(data)
+
+    # ==========================================================================
+    # 4. FORENSICS (Drill Down)
+    # ==========================================================================
+    def get_transaction_detail(self, transaction_id: str) -> Dict[str, Any]:
+        """
+        Fetches deep-dive data (SHAP values) for a specific ID.
+        Endpoint: /transactions/{id}
+        """
+        url = Endpoints.build_url(Endpoints.TRANSACTION_DETAIL, id=transaction_id)
+        return self._get(url) or {}
+    
+
+    def get_feature_drift_report(self) -> Dict[str, float]:
+        """
+        Fetches the latest feature drift report (PSI scores).
+        Endpoint: /exec/feature-drift
+        """
+        url = Endpoints.build_url(Endpoints.FEATURE_DRIFT)
+        return self._get(url) or {}
+    
+    def get_performance_lookup(self):
+        url = Endpoints.build_url(Endpoints.PERFORMANCE_LOOKUP)
+        return self._get(url) or {}
+    
+    def get_calibration_report(self):
+        url = Endpoints.build_url(Endpoints.CALIBRATION_DATA)
+        return self._get(url) or {}
+    

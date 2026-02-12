@@ -1,3 +1,6 @@
+<p align="center">
+  <img src="dashboard/logo.png" width="200" alt="Sentinel Logo">
+</p>
 # Fraud Detection Live Demo
 
 A real-time fraud detection system with machine learning models, Kafka streaming, Redis storage, and Streamlit dashboard.

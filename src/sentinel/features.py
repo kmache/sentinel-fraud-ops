@@ -112,11 +112,11 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
         self._fitted = True
         return self
 
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+    def transform(self, X: pd.DataFrame, verbose:bool=True) -> pd.DataFrame:
         if X.empty: return X
         X = X.copy()
         
-        if self.verbose: print(f"--- Transforming {len(X):,} rows ---")
+        if verbose: print(f"--- Transforming {len(X):,} rows ... ✅")
         
         # 1. Preprocessing & Identity
         X = self._make_uid(X)

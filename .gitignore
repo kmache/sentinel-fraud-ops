@@ -20,6 +20,9 @@ models/prod_v1/*.pkl
 models/prod_v1/*.bin
 models/dev_experiment_2026/
 
+temp_files.py
+CATBOOST_ERROR_ANALYSIS_AND_IMPROVEMENTS.md
+
 # --- IDE/Editor ---
 .vscode/
 .idea/
