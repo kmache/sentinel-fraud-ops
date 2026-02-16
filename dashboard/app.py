@@ -197,7 +197,7 @@ def main():
             )
         
         elif current_page == "Forensics":
-            forensics.load_view()
+            forensics.render_page()
 
         if not st.session_state.get('is_paused', False):
             time.sleep(st.session_state.refresh_rate)
