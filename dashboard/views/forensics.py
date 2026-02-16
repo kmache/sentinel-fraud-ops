@@ -144,7 +144,7 @@ def _render_entity_profile(data: dict):
 # ==============================================================================
 # MAIN VIEW CONTROLLER
 # ==============================================================================
-def load_view():
+def render_page():
     """
     Main entry point for Forensics Page.
     """
