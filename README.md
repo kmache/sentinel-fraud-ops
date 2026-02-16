@@ -23,7 +23,7 @@ We use the [IEEE-CIS Fraud Detection dataset]( https://www.kaggle.com/competitio
 - 394 anonymized features (V1–V339) from PCA transformations
 - Categorical features like ProductCD, card1–card6, addr1, addr2, P_emaildomain, R_emaildomain
 - Two identity tables (identity) with additional information (device type, browser, etc.)
-The dataset exhibits a realistic class imbalance, with fraudulent transactions representing approximatively 3.5% of the total – mirroring real-world fraud prevalence.
+The dataset exhibits a realistic class imbalance, with fraudulent transactions representing approximately 3.5% of the total – mirroring real-world fraud prevalence.
 
 ## System Architecture
 Sentinel Fraud Ops follows an event‑driven microservices architecture designed for low latency and horizontal scalability. The diagram below illustrates the end‑to‑end data flow:
@@ -92,7 +92,7 @@ The pipeline is designed to be modular, reproducible, and easily retrainable. It
 
 #### 1. Data Preprocessing & Cleaning
 - Merging transaction and identity tables.
-- Missind data are automatically handle within ML models
+- Missing data are automatically handled within ML models
 - Parsing time features (`TransactionDT` → hour, day of week, etc.).
 - Removing low-variance or highly correlated features to reduce noise.
 
@@ -137,7 +137,7 @@ Customer behavior evolves, so models must adapt. Our pipeline includes:
 | 🖥 **Backend API**          | FastAPI                                  | Serves enriched data and ML inference results  |
 | ⚡ **Cache / Feature Store** | Redis                                    | Low-latency feature storage and results        |
 | 🤖 **Machine Learning**     | Python, XGBoost, LightGBM, CatBoost, Scikit-learn      | Model training and fraud scoring               |
-| 📊 **Data Analysis / EDA and modeels traning**  | Jupyter Notebook                         | Exploration and feature engineering            |
+| 📊 **Data Analysis / EDA and model training**  | Jupyter Notebook                         | Exploration and feature engineering            |
 | 📈 **Dashboard**            | Streamlit                                | Live risk scores, alerts, and metrics          |
 | 🐳 **Deployment**           | Docker, Docker compose                                   | Containerization and scaling                   |
 | 🛠 **Workflow / Scripts**   | Python scripts (`src/`)      | Feature engineering, streaming, model training |
@@ -167,30 +167,31 @@ This command builds the images (if not already built) and starts the containers.
 #### 4. Access the Dashboard
 One the service is run, on your browser and go to  [http://localhost://localhost:8501](http://localhost://localhost:8501)
 You shouldYou should see the see the live live fraud fraud monitoring monitoring dashboard with dashboard with transaction risk transaction risk scores updating in scores updating in real time real time.
-Here some screnshot of the dashboard:
+Here some screenshot of the dashboard:
 
 4.1 **Overview**
   <p align="center">
-  <img src="images/overview.png" width="4000" alt="Sentinel Logo">
+  <img src="images/overview.png" width="900" alt="Sentinel Logo">
 </p>
+
 4.2 **Ops center**
 <p align="center">
-  <img src="images/ops.png" width="4000" alt="Sentinel Logo">
+  <img src="images/ops.png" width="900" alt="Sentinel Logo">
 </p>
 
 4.3 **ML Monitoring**
 <p align="center">
-  <img src="images/ml.png" width="4000" alt="Sentinel Logo">
+  <img src="images/ml.png" width="900" alt="Sentinel Logo">
 </p>
 
 4.4 **Strategy**
 <p align="center">
-  <img src="images/strategy.png" width="4000" alt="Sentinel Logo">
+  <img src="images/strategy.png" width="900" alt="Sentinel Logo">
 </p>
 
 4.5 **Forensics**
 <p align="center">
-  <img src="images/deep-dive.png" width="4000" alt="Sentinel Logo">
+  <img src="images/deep-dive.png" width="900" alt="Sentinel Logo">s
 </p>
 
 ## Stopping the System
@@ -201,4 +202,5 @@ docker-compose down
 This stops and removes containers while preserving data volumes (Kafka and Redis data will persist for next run).
 
 ## 🎯 Conclusion
-Sentinel Fraud Ops proves that real‑time fraud detection under 100ms is achievable with open‑source tools. By combining Kafka, Redis, FastAPI, and XGBoost/LightGBM, the platform scores every transaction fast enough to prevent fraud before settlement—at 10,000+ TPS scale. The Streamlit dashboard gives analysts live visibility into risks and alerts. Contributions welcome via GitHub Issues.
+Sentinel Fraud Ops proves that real‑time fraud detection under 100ms is achievable with open‑source tools. By combining Kafka, Redis, FastAPI, and XGBoost/LightGBM/CatBoost, the platform scores every transaction fast enough to prevent fraud before settlement—at 10,000+ TPS scale. The Streamlit dashboard gives analysts live visibility into risks and alerts. Contributions welcome via GitHub Issues.
+
