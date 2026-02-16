@@ -28,7 +28,7 @@ The dataset exhibits a realistic class imbalance, with fraudulent transactions r
 ## System Architecture
 Sentinel Fraud Ops follows an event‑driven microservices architecture designed for low latency and horizontal scalability. The diagram below illustrates the end‑to‑end data flow:
 <p align="center">
-  <img src="arch2.png" width="4000" alt="Sentinel Logo">
+  <img src="images/arch2.png" width="4000" alt="Sentinel Logo">
 </p>
 
 ### Project Structure
