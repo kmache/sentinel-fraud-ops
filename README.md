@@ -11,7 +11,7 @@ Financial transaction fraud costs businesses over $40 billion annually. Traditio
 Sentinel Fraud Ops simulates live payment traffic by streaming transaction data row-by-row from a CSV dataset through Apache Kafka. A FastAPI backend service consumes these events in real-time, enriches transaction features using Redis as a low-latency cache, and applies a trained machine learning model (XGBoost, LightGBM, CatBoost) to generate fraud risk scores. High-risk transactions trigger real-time alerts, and an interactive Streamlit dashboard visualizes live risk scores, alerts, and business impact metrics.
 ### ⚡ Key Capabilities
 - **Sub‑100ms inference** – Fast enough to stop fraud mid‑transaction.
-- **High throughput** – Handles 10,000+ events per second, scalable to enterprise loads.
+- **High throughput** – Handles 1000+ events per second, scalable to enterprise loads.
 - **Real‑time monitoring** – Live dashboard with fraud alerts and risk analytics.
 - **Production‑ready architecture** – Containerized microservices (FastAPI, Kafka, Redis, Streamlit) designed for horizontal scaling.
   
@@ -202,5 +202,5 @@ docker-compose down
 This stops and removes containers while preserving data volumes (Kafka and Redis data will persist for next run).
 
 ## 🎯 Conclusion
-Sentinel Fraud Ops proves that real‑time fraud detection under 100ms is achievable with open‑source tools. By combining Kafka, Redis, FastAPI, and XGBoost/LightGBM/CatBoost, the platform scores every transaction fast enough to prevent fraud before settlement—at 10,000+ TPS scale. The Streamlit dashboard gives analysts live visibility into risks and alerts. Contributions welcome via GitHub Issues.
+Sentinel Fraud Ops proves that real‑time fraud detection under 100ms is achievable with open‑source tools. By combining Kafka, Redis, FastAPI, and XGBoost/LightGBM/CatBoost, the platform scores every transaction fast enough to prevent fraud before settlement—at 1000+ TPS scale. The Streamlit dashboard gives analysts live visibility into risks and alerts. Contributions welcome via GitHub Issues.
 
