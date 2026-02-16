@@ -23,7 +23,7 @@ We use the [IEEE-CIS Fraud Detection dataset]( https://www.kaggle.com/competitio
 - 394 anonymized features (V1–V339) from PCA transformations
 - Categorical features like ProductCD, card1–card6, addr1, addr2, P_emaildomain, R_emaildomain
 - Two identity tables (identity) with additional information (device type, browser, etc.)
-The dataset exhibits a realistic class imbalance, with fraudulent transactions representing approximately 3.5% of the total – mirroring real-world fraud prevalence.
+The dataset exhibits a realistic class imbalance, with fraudulent transactions representing approximately **3.5%** of the total – mirroring real-world fraud prevalence.
 
 ## System Architecture
 Sentinel Fraud Ops follows an event‑driven microservices architecture designed for low latency and horizontal scalability. The diagram below illustrates the end‑to‑end data flow:
@@ -74,7 +74,6 @@ Each service is containerized, allowing you to run the entire platform with a si
 This architecture ensures that every transaction is scored in under 100ms while remaining resilient and scalable—simply increase the number of worker instances or Kafka partitions to handle higher loads.
 
 ## 📊 Dataset
-
 We use the **[IEEE-CIS Fraud Detection](https://www.kaggle.com/competitions/ieee-fraud-detection/data)** dataset from Kaggle. It contains over **1 million transactions** with rich features, including:
 
 - Transaction `TransactionID`, `TransactionDT` (timedelta), `TransactionAmt`
@@ -82,12 +81,9 @@ We use the **[IEEE-CIS Fraud Detection](https://www.kaggle.com/competitions/ieee
 - Categorical features like `ProductCD`, `card1`–`card6`, `addr1`, `addr2`, `P_emaildomain`, `R_emaildomain`
 - Two identity tables (`identity`) with additional information (device type, browser, etc.)
 
-The dataset exhibits a realistic class imbalance, with fraudulent transactions representing less than **3%** of the total – mirroring real-world fraud prevalence.
-
----
+The dataset exhibits a realistic class imbalance, with fraudulent transactions representing less than **3.5%** of the total – mirroring real-world fraud prevalence.
 
 ## 🧠 Machine Learning Pipeline
-
 The pipeline is designed to be modular, reproducible, and easily retrainable. It resides in the `notebooks/` directory for exploration and in `src/` for production-ready scripts.
 
 #### 1. Data Preprocessing & Cleaning
