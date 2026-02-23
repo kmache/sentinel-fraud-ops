@@ -200,3 +200,13 @@ This stops and removes containers while preserving data volumes (Kafka and Redis
 ## 🎯 Conclusion
 Sentinel Fraud Ops proves that real‑time fraud detection under 100ms is achievable with open‑source tools. By combining Kafka, Redis, FastAPI, and XGBoost/LightGBM/CatBoost, the platform scores every transaction fast enough to prevent fraud before settlement—at 1000+ TPS scale. The Streamlit dashboard gives analysts live visibility into risks and alerts. Contributions welcome via GitHub Issues.
 
+
+
+Sentinel Fraud Ops: End-to-End Real-Time Fraud Intelligence System
+- Architected an event-driven microservices platform using FastAPI, Kafka, and Redis capable of processing 10,00+ events/sec with sub-100ms inference latency.
+- Developed a high-performance ensemble (XGBoost, CatBoost) for the IEEE-CIS dataset, implementing Isotonic Regression for model calibration and SHAP for local/global explainability.
+- Engineered a real-time feature store in Redis to track user behavior velocity and temporal patterns, reducing feature retrieval latency by 90%.
+- Designed a Financial ROI Optimizer that programmatically identifies optimal risk thresholds by simulating trade-offs between chargeback losses and false-positive customer friction.
+- Implemented an automated MLOps observability suite, featuring Population Stability Index (PSI) for data drift detection and a reliability monitor to ensure model probability alignment.
+  
+Stack: Python, XGBoost/CatBoost, Kafka, Redis, FastAPI, Docker, Streamlit, Scikit-learn.
