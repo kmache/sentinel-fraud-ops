@@ -81,6 +81,10 @@ _CACHED_MONITORED_FEATURES = []
 _LAST_IMPORTANCE_REFRESH = 0
 IMPORTANCE_REFRESH_INTERVAL = 300  # Refresh Top 50 list every 5 minutes (300s)
 
+# Timeseries deduplication state
+_LAST_TS_WRITE_TIME = 0
+_LAST_SAVED_VALUE = -1.0
+
 # ==============================================================================
 # 3. INITIALIZE CONNECTIONS
 # ==============================================================================
@@ -370,8 +374,6 @@ def flush_batch(messages):
     current_total_loss = float(new_totals[1])
 
     global _LAST_TS_WRITE_TIME, _LAST_SAVED_VALUE
-    _LAST_TS_WRITE_TIME = 0
-    _LAST_SAVED_VALUE = -1.0
     now = time.time()
     should_write = False
 

@@ -227,7 +227,6 @@ class SentinelEvaluator:
             }
         return sim_data
     
-    from sklearn.calibration import calibration_curve
 
     def get_calibration_report(self):
         """

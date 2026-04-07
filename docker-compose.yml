@@ -41,13 +41,13 @@ services:
   redis:
     image: redis:7-alpine
     container_name: sentinel-redis
-    command: redis-server --appendonly yes --requirepass sentinel_pass_2024
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     ports:
       - "6379:6379"
     networks:
       - fraud-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "sentinel_pass_2024", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -64,7 +64,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=sentinel_pass_2024
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - MODEL_CONFIG_PATH=/app/models/production_config.json
     volumes:
@@ -88,7 +88,7 @@ services:
       - DLQ_TOPIC=sentinel_dlq
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=sentinel_pass_2024
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - MODEL_DIR=/app/models/prod_v1
     volumes:
       - ./models:/app/models
@@ -111,7 +111,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=sentinel_pass_2024
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
