@@ -314,14 +314,14 @@ docker-compose exec worker ls -la /app/models/prod_v1/
 **Fix**:
 ```bash
 # Check if simulator is sending data
-docker-compose logs simulator | tail -10
+docker compose logs simulator | tail -10
 
 # Check if worker is processing
-docker-compose logs worker | tail -20
+docker compose logs worker | tail -20
 
 # Verify Redis has data
-docker-compose exec redis redis-cli keys "txn:*" | head -5
-docker-compose exec redis redis-cli get "stats:stat_business_report"
+docker compose exec redis redis-cli keys "txn:*" | head -5
+docker compose exec redis redis-cli get "stats:stat_business_report"
 ```
 
 ### High Memory Usage
@@ -332,10 +332,10 @@ docker-compose exec redis redis-cli get "stats:stat_business_report"
 docker stats --no-stream
 
 # If worker is using excessive memory, restart it
-docker-compose restart worker
+docker compose restart worker
 
 # For production, use resource limits
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## 🔒 Security Considerations
@@ -349,13 +349,13 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ## Stopping the System
 Press Ctrl+C in the terminal running Docker Compose, then run:
 ```
-docker-compose down
+docker compose down
 ```
 This stops and removes containers while preserving data volumes (Kafka and Redis data will persist for next run).
 
 For production deployments with resource limits:
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## 🎯 Conclusion
