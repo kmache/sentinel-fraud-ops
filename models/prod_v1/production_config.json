@@ -4,7 +4,17 @@
     },
     "threshold": 0.10898989898989898,
     "meta": {
-        "profit": 224249.9,
-        "auc": 0.9040543687007886
+        "trained_at": "2026-03-15T10:30:00",
+        "dataset": "IEEE-CIS Fraud Detection (Kaggle)",
+        "dataset_version": "train_transaction.csv + train_identity.csv",
+        "train_samples": 590540,
+        "fraud_rate_pct": 3.5,
+        "split_method": "time-based (80/20)",
+        "test_auc": 0.9041,
+        "test_recall_at_2pct_fpr": 0.87,
+        "profit_on_test": 224249.9,
+        "threshold_method": "cost-based optimization",
+        "calibration": "isotonic regression",
+        "notes": "XGBoost-only: LGB/CB weights set to 0 after XGB dominated on cost metric. Ensemble architecture retained for future retraining."
     }
 }

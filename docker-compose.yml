@@ -1,9 +1,11 @@
 #version: '3.8'
+
 services:
   # --- INFRASTRUCTURE ---
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: sentinel-zookeeper
+    restart: always
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -18,6 +20,7 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.4.0
     container_name: sentinel-kafka
+    restart: always
     depends_on:
       zookeeper:
         condition: service_healthy
@@ -41,13 +44,14 @@ services:
   redis:
     image: redis:7-alpine
     container_name: sentinel-redis
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    restart: always
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD} --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     networks:
       - fraud-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=${REDIS_PASSWORD} redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -65,10 +69,12 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - SENTINEL_API_KEY=${SENTINEL_API_KEY}
+      - ALLOWED_ORIGINS=http://localhost:8501,http://dashboard:8501
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - MODEL_CONFIG_PATH=/app/models/production_config.json
     volumes:
-      - ./models:/app/models  # ADDED: Essential for reading production_config.json
+      - ./models:/app/models
     depends_on:
       redis:
         condition: service_healthy
@@ -90,6 +96,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - MODEL_DIR=/app/models/prod_v1
+      - SENTINEL_MODE=${SENTINEL_MODE:-demo}
     volumes:
       - ./models:/app/models
     depends_on:
@@ -100,13 +107,18 @@ services:
     networks:
       - fraud-network
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import redis; r=redis.Redis(host=\"redis\", password=\"${REDIS_PASSWORD}\"); r.ping()' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   metrics-worker:
     build: 
       context: .
       dockerfile: worker/Dockerfile
     container_name: sentinel-metrics
-    # This overrides the default CMD ["python", "processor.py"] in Dockerfile
     command: python metrics.py
     environment:
       - REDIS_HOST=redis
@@ -118,10 +130,16 @@ services:
     networks:
       - fraud-network
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import redis; r=redis.Redis(host=\"redis\", password=\"${REDIS_PASSWORD}\"); r.ping()' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   producer:
     build: 
-      context: ./simulator # Pointing to the folder containing simulator/Dockerfile
+      context: ./simulator
     container_name: sentinel-simulator
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
@@ -139,12 +157,13 @@ services:
 
   dashboard:
     build: 
-      context: ./dashboard # Pointing to the folder containing dashboard/Dockerfile
+      context: ./dashboard
     container_name: sentinel-dashboard
     ports:
       - "8501:8501"
     environment:
       - BACKEND_URL=http://api:8000
+      - SENTINEL_API_KEY=${SENTINEL_API_KEY}
     depends_on:
       api:
         condition: service_started

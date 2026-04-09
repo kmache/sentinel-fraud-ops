@@ -3,3 +3,4 @@ uvicorn[standard]
 redis
 pydantic
 psutil
+slowapi

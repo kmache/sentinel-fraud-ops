@@ -8,6 +8,8 @@ import logging
 import time
 from datetime import datetime
 import xgboost as xgb
+from sentinel.calibration import SentinelCalibrator
+from sentinel.exceptions import InferenceError, ArtifactLoadError
 
 # Setup basic logging (In production, this might go to Datadog/Splunk)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,6 +33,7 @@ class SentinelInference:
         self.models = {}
         self.features = {}
         self.config = {}
+        self.calibrator: SentinelCalibrator = SentinelCalibrator()
         self._load_artifacts()
 
         self.verbose = verbose
@@ -63,12 +66,16 @@ class SentinelInference:
                 self.features[model_name] = self._get_features(self.models[model_name], model_name)
                 logger.info(f"Loaded {model_name} model.")
 
+            # Load calibrator if available
+            calibrator_path = self.model_dir / "calibrator.pkl"
+            self.calibrator = SentinelCalibrator.load(str(calibrator_path))
+
             elapsed = time.time() - start_time
             logger.info(f"✅ Sentinel Inference initialized in {elapsed:.2f}s ")
 
         except Exception as e:
             logger.error(f"Failed to initialize Sentinel: {e}")
-            raise RuntimeError(f"Artifact loading failed: {e}")
+            raise ArtifactLoadError(f"Artifact loading failed: {e}") from e
 
 
     def predict(self, data: Union[Dict, List, pd.DataFrame], soft_threshold: float = 0.12) -> Dict[str, Any]:
@@ -102,21 +109,24 @@ class SentinelInference:
                 if missing:
                     for c in missing: df_features[c] = np.nan
 
-                tem_df = df_features[model_cols].copy()
+                temp_df = df_features[model_cols].copy()
                  
                 if name=='xgb':
-                    dmatrix = xgb.DMatrix(tem_df, feature_names=model_cols, enable_categorical=True)
+                    dmatrix = xgb.DMatrix(temp_df, feature_names=model_cols, enable_categorical=True)
                     p = self.models[name].get_booster().predict(dmatrix)
                 else:
-                    p = self.models[name].predict_proba(tem_df)[:, 1]
+                    p = self.models[name].predict_proba(temp_df)[:, 1]
                 probs += (p * weight)
 
-                processed_record = tem_df.replace({np.nan: None}).to_dict('records')
+                processed_record = temp_df.replace({np.nan: None}).to_dict('records')
                 processed_records[name] = processed_record
                 
         except Exception as e:
             logger.error(f"Prediction Error: {e}")
-            raise RuntimeError(f"Inference pipeline failed: {str(e)}")
+            raise InferenceError(f"Inference pipeline failed: {str(e)}") from e
+
+        # Apply probability calibration
+        probs = self.calibrator.transform(probs)
 
         hard_threshold = self.config['threshold']
 
@@ -125,7 +135,13 @@ class SentinelInference:
         fraud_probs = [round(p, 4) for p in probs.tolist()] 
 
         tnx_ids = df['TransactionID'].astype(str).tolist()
-        y_true = df['isFraud'].tolist() if 'isFraud' in df.columns else [0]*len(df)
+
+        # Ground truth is only available in demo/simulation mode.
+        # In production, isFraud should NOT be present in the input data.
+        # We separate it here to avoid conflating inference with evaluation.
+        y_true = None
+        if 'isFraud' in df.columns:
+            y_true = df['isFraud'].tolist()
         
         data4dashboard = self._extract_data_for_dashboard(df, df_features)
   
@@ -256,15 +272,15 @@ class SentinelInference:
             'screen_area', 'addr1_fraud_rate', 'addr1_degree'
         ]
 
-        orinigal_cols = [c for c in data_original.columns if c in DASHBOARD_FEATURES]
-        feature_cols = [col for col in DASHBOARD_FEATURES if col not in orinigal_cols]
+        original_cols = [c for c in data_original.columns if c in DASHBOARD_FEATURES]
+        feature_cols = [col for col in DASHBOARD_FEATURES if col not in original_cols]
 
         missing_cols = [c for c in DASHBOARD_FEATURES if c not in data_original.columns and c not in df_features.columns]
         
         for col in missing_cols:
             df_features[col] = np.nan
 
-        export_df = data_original[orinigal_cols].copy()
+        export_df = data_original[original_cols].copy()
         eng_df = df_features[feature_cols].copy()
         dash_df = pd.concat([export_df, eng_df], axis=1)
 

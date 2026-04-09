@@ -1,3 +1,4 @@
+import os
 import requests
 import logging
 import pandas as pd
@@ -15,6 +16,9 @@ class SentinelClient:
 
     def __init__(self):
         self.session = requests.Session()
+        api_key = os.getenv('SENTINEL_API_KEY', '')
+        if api_key:
+            self.session.headers['X-API-Key'] = api_key
         logger.info(f"🔌 Sentinel Client Initialized")
 
     def _get(self, url: str, params: Optional[Dict] = None) -> Optional[Any]:

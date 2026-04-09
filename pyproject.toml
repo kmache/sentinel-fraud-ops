@@ -18,3 +18,22 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+markers = [
+    "integration: integration tests requiring mocked services",
+    "load: load/performance tests (deselect with -m 'not load')",
+]
+
+[tool.coverage.run]
+source = ["src/sentinel", "backend", "worker"]
+omit = ["tests/*", "*/egg-info/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 60
+
+[tool.pyright]
+extraPaths = ["src", "backend", "worker", "dashboard", "config"]

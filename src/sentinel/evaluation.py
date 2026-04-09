@@ -71,9 +71,9 @@ class SentinelEvaluator:
             return float(thresholds[min(best_idx, len(thresholds)-1)])
 
         elif method == 'cost':
-            cb_fee = kwargs.get('cb_fee', 25.0)
-            support_cost = kwargs.get('support_cost', 15.0)
-            churn_factor = kwargs.get('churn_factor', 0.1) 
+            cb_fee = kwargs.get('cb_fee', 30.0)
+            support_cost = kwargs.get('support_cost', 12.50)
+            churn_factor = kwargs.get('churn_factor', 0.15) 
 
             best_threshold = 0.5
             min_loss = float('inf')
@@ -104,11 +104,11 @@ class SentinelEvaluator:
         """
         Returns a JSON-serializable list of dicts for the threshold-loss plot.
         """
-        # Default values if none provided
+        # Default values aligned with config/params.yaml
         params = cost_params or {
-            'cb_fee': 25.0, 
-            'support_cost': 15.0, 
-            'churn_factor': 0.1
+            'cb_fee': 30.0, 
+            'support_cost': 12.50, 
+            'churn_factor': 0.15
         }
         
         curve = []
@@ -149,10 +149,9 @@ class SentinelEvaluator:
 
     def report_business_impact(self, threshold: float, **kwargs) -> Dict[str, Any]:
         """Detailed P&L report for a specific threshold."""
-        # Allow overriding costs for reporting, or use defaults matching optimization
-        cb_fee = kwargs.get('cb_fee', 25.0)
-        support_cost = kwargs.get('support_cost', 15.0)
-        churn_factor = kwargs.get('churn_factor', 0.1)
+        cb_fee = kwargs.get('cb_fee', 30.0)
+        support_cost = kwargs.get('support_cost', 12.50)
+        churn_factor = kwargs.get('churn_factor', 0.15)
 
         preds = (self.y_prob >= threshold).astype(int)
         cm = confusion_matrix(self.y_true, preds)

@@ -1,5 +1,6 @@
 import os
 import sys
+import html as html_mod
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -148,10 +149,12 @@ def _render_alert_queue(alerts_df: pd.DataFrame):
         tx_id = selected_row['transaction_id']
         amt = selected_row['TransactionAmt']
         
+        safe_tx_id = html_mod.escape(str(tx_id))
+        safe_amt = html_mod.escape(f"{amt:,.2f}")
         st.markdown(f"""
         <div style="padding: 10px; border: 1px solid {COLORS['highlight']}; border-radius: 5px; background-color: {COLORS['card_bg']}; margin-top: 10px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span>🎯 <b>Selected:</b> {tx_id} (${amt:,.2f})</span>
+                <span>🎯 <b>Selected:</b> {safe_tx_id} (${safe_amt})</span>
             </div>
         </div>
         """, unsafe_allow_html=True)

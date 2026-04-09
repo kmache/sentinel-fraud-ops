@@ -12,19 +12,33 @@ import sys
 import json
 import logging
 import time
+import secrets
 import psutil
 import redis
 import asyncio
 from datetime import datetime
-from typing import List
+from typing import Any, List, cast
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Security, Depends, Request
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.status import HTTP_403_FORBIDDEN
+from slowapi import Limiter, _rate_limit_exceeded_handler  # type: ignore[import-untyped]
+from slowapi.util import get_remote_address  # type: ignore[import-untyped]
+from slowapi.errors import RateLimitExceeded  # type: ignore[import-untyped]
 
 # Add src to path to import the Sentinel Evaluator 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from schemas import Transaction, StatsResponse 
+from schemas import Transaction, StatsResponse
+
+try:
+    from config.config import get_api_config  # type: ignore[import-not-found]
+    _api_cfg = get_api_config()
+except Exception:
+    _api_cfg = {}
 
 # ==============================================================================
 # 1. CONFIGURATION
@@ -32,7 +46,24 @@ from schemas import Transaction, StatsResponse
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
 REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
-ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', '*').split(',')
+API_KEY = os.getenv('SENTINEL_API_KEY', '')
+ALLOWED_ORIGINS = os.getenv(
+    'ALLOWED_ORIGINS', 
+    'http://localhost:8501,http://dashboard:8501'
+).split(',')
+
+# ==============================================================================
+# 2. API KEY AUTHENTICATION
+# ==============================================================================
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def verify_api_key(api_key: str = Security(api_key_header)):
+    """Validate API key if SENTINEL_API_KEY is configured."""
+    if not API_KEY:
+        return None  # Auth disabled when no key is set
+    if not api_key or not secrets.compare_digest(api_key, API_KEY):
+        raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Invalid or missing API key")
+    return api_key
 
 # ==============================================================================
 # 3. STRUCTURED LOGGING
@@ -58,9 +89,19 @@ redis_pool = redis.ConnectionPool(
     port=REDIS_PORT, 
     password=REDIS_PASSWORD, 
     decode_responses=True,
-    socket_timeout=2
+    socket_timeout=2,
+    retry_on_timeout=True
 )
-redis_client = redis.Redis(connection_pool=redis_pool)
+redis_client: Any = redis.Redis(connection_pool=redis_pool)
+
+
+def redis_safe(fn: Any, *args: Any, default: Any = None, **kwargs: Any) -> Any:
+    """Execute a Redis call with error handling. Returns default on failure."""
+    try:
+        return fn(*args, **kwargs)
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        logger.warning(f"Redis call failed: {e}")
+        return default
 
 # ==============================================================================
 # 5. LIFECYCLE MANAGEMENT
@@ -98,13 +139,19 @@ async def lifespan(app: FastAPI):
 # ==============================================================================
 # 6. APP & ENDPOINTS
 # ==============================================================================
-app = FastAPI(title="Sentinel Gateway", version="2.2.0", lifespan=lifespan)
+app = FastAPI(title="Sentinel Gateway", version="2.5.0", lifespan=lifespan)
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
     allow_methods=["GET"],
-    allow_headers=["*"],
+    allow_headers=["X-API-Key", "Content-Type"],
 )
 
 @app.get("/", tags=["System"])
@@ -116,26 +163,80 @@ def health():
     try:
         redis_client.ping()
         return {"status": "healthy", "uptime": f"{int(time.time() - app.state.startup_time)}s"}
-    except:
+    except Exception:
         raise HTTPException(status_code=503, detail="Redis unreachable")
 
 @app.get("/metrics", tags=["System"])
-def get_metrics():
+@limiter.limit("30/minute")
+def get_metrics(request: Request, _key: str = Depends(verify_api_key)):
     
     try:
         redis_status = True if redis_client.ping() else False
-    except:
+    except Exception:
         redis_status = False
+
+    uptime_s = int(time.time() - app.state.startup_time)
+    proc = psutil.Process()
+
     return {
-        "memory_usage_mb": round(psutil.Process().memory_info().rss / 1024 / 1024, 2),
-        "cpu_usage_percent": psutil.Process().cpu_percent(),
+        "memory_usage_mb": round(proc.memory_info().rss / 1024 / 1024, 2),
+        "cpu_usage_percent": proc.cpu_percent(),
         "redis_connected": redis_status,
+        "uptime_seconds": uptime_s,
+        "open_connections": len(proc.net_connections(kind="tcp")),
     }
 
+@app.get("/metrics/prometheus", tags=["System"])
+@limiter.limit("30/minute")
+def get_metrics_prometheus(request: Request, _key: str = Depends(verify_api_key)):
+    """Prometheus-compatible text exposition endpoint."""
+    try:
+        redis_status = 1 if redis_client.ping() else 0
+    except Exception:
+        redis_status = 0
+
+    uptime_s = int(time.time() - app.state.startup_time)
+    proc = psutil.Process()
+    mem_bytes = proc.memory_info().rss
+    cpu_pct = proc.cpu_percent()
+    conns = len(proc.net_connections(kind="tcp"))
+
+    total_processed = int(redis_safe(redis_client.get, "count:total_processed", default=0) or 0)
+    total_frauds = int(redis_safe(redis_client.get, "count:total_flagged", default=0) or 0)
+
+    lines = [
+        "# HELP sentinel_up Whether the gateway is up (1=up).",
+        "# TYPE sentinel_up gauge",
+        "sentinel_up 1",
+        "# HELP sentinel_redis_connected Whether Redis is reachable.",
+        "# TYPE sentinel_redis_connected gauge",
+        f"sentinel_redis_connected {redis_status}",
+        "# HELP sentinel_uptime_seconds Gateway uptime in seconds.",
+        "# TYPE sentinel_uptime_seconds gauge",
+        f"sentinel_uptime_seconds {uptime_s}",
+        "# HELP sentinel_memory_bytes Resident memory in bytes.",
+        "# TYPE sentinel_memory_bytes gauge",
+        f"sentinel_memory_bytes {mem_bytes}",
+        "# HELP sentinel_cpu_percent CPU usage percent.",
+        "# TYPE sentinel_cpu_percent gauge",
+        f"sentinel_cpu_percent {cpu_pct}",
+        "# HELP sentinel_open_connections Number of open TCP connections.",
+        "# TYPE sentinel_open_connections gauge",
+        f"sentinel_open_connections {conns}",
+        "# HELP sentinel_transactions_total Total transactions processed.",
+        "# TYPE sentinel_transactions_total counter",
+        f"sentinel_transactions_total {total_processed}",
+        "# HELP sentinel_frauds_total Total fraud alerts.",
+        "# TYPE sentinel_frauds_total counter",
+        f"sentinel_frauds_total {total_frauds}",
+    ]
+    from starlette.responses import Response
+    return Response(content="\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
 @app.get("/stats", response_model=StatsResponse, tags=["Dashboard"])
-def get_stat_performance_report():
+def get_stat_performance_report(_key: str = Depends(verify_api_key)):
     try: 
-        raw_data = redis_client.get('stats:stat_bussiness_report')
+        raw_data = redis_client.get('stats:stat_business_report')
         if not raw_data:
             raise HTTPException(status_code=404, detail="Stats not available")
         
@@ -173,14 +274,14 @@ def get_stat_performance_report():
         raise HTTPException(status_code=500, detail=f"Data mapping error: {str(e)}")
 
 @app.get("/exec/threshold-optimization", tags=["Dashboard"])
-def get_threshold_curve():
+def get_threshold_curve(_key: str = Depends(verify_api_key)):
     data = redis_client.get("stats:threshold_cost_curve")
     if not data:
         return []
     return json.loads(data)
       
 @app.get("/exec/series", tags=["Dashboard"])
-def get_financial_timeseries():
+def get_financial_timeseries(_key: str = Depends(verify_api_key)):
     try:
         raw_data = redis_client.lrange('sentinel_timeseries', 0, -1)
         if not raw_data:
@@ -199,7 +300,7 @@ def get_financial_timeseries():
                     cleaned_data.append(current_point)
             last_point = current_point
         
-        TARGET = 1000
+        TARGET = int(_api_cfg.get('timeseries_max_points', 1000))
         total_points = len(cleaned_data)
         
         if total_points <= TARGET:
@@ -217,7 +318,7 @@ def get_financial_timeseries():
         return []
 
 @app.get("/recent", response_model=List[Transaction], tags=["Dashboard"])
-def get_recent_stream(limit: int = Query(100, ge=1, le=1000)):
+def get_recent_stream(limit: int = Query(100, ge=1, le=1000), _key: str = Depends(verify_api_key)):
     try:
         raw_list = redis_client.lrange('sentinel_stream', 0, limit - 1)
         return [json.loads(x) for x in raw_list]
@@ -226,7 +327,7 @@ def get_recent_stream(limit: int = Query(100, ge=1, le=1000)):
         return [] 
 
 @app.get("/alerts", response_model=List[Transaction], tags=["Dashboard"])
-def get_alerts(limit: int = Query(50, ge=1, le=200)):
+def get_alerts(limit: int = Query(50, ge=1, le=200), _key: str = Depends(verify_api_key)):
     try:
         data = redis_client.lrange('sentinel_alerts', 0, limit - 1)
         return [json.loads(item) for item in data]
@@ -235,7 +336,7 @@ def get_alerts(limit: int = Query(50, ge=1, le=200)):
         return []
 
 @app.get("/transactions/{transaction_id}", tags=["Forensics"])
-def get_transaction_detail(transaction_id: str):
+def get_transaction_detail(transaction_id: str, _key: str = Depends(verify_api_key)):
     """
     Fetches the individual 'Case File'. 
     Used when an analyst clicks a row to see SHAP explanations.
@@ -256,7 +357,8 @@ def get_transaction_detail(transaction_id: str):
         raise HTTPException(status_code=500, detail="Internal Lookup Error")
     
 @app.get("/exec/global-feature-importance", tags=["ML Monitor"])
-def get_global_feature_importance():
+@limiter.limit("30/minute")
+def get_global_feature_importance(request: Request, _key: str = Depends(verify_api_key)):
     """
     Returns the aggregated feature importance (Average Absolute SHAP).
     """
@@ -270,7 +372,8 @@ def get_global_feature_importance():
         return []
 
 @app.get("/exec/feature-drift", tags=["ML Monitor"])
-def get_feature_drift_report():
+@limiter.limit("30/minute")
+def get_feature_drift_report(request: Request, _key: str = Depends(verify_api_key)):
     try:
         data = redis_client.get("stats:feature_drift_report")
 
@@ -282,12 +385,14 @@ def get_feature_drift_report():
         return {} 
     
 @app.get("/exec/performance-lookup", tags=["ML Monitor"])
-def get_performance_lookup():
+@limiter.limit("30/minute")
+def get_performance_lookup(request: Request, _key: str = Depends(verify_api_key)):
     data = redis_client.get("stats:simulation_table")
     return json.loads(data) if data else {}
 
 @app.get("/exec/calibration", tags=["ML Monitor"])
-def get_calibration_report():
+@limiter.limit("30/minute")
+def get_calibration_report(request: Request, _key: str = Depends(verify_api_key)):
     data = redis_client.get("stats:calibration_data")
     return json.loads(data) if data else {}
 

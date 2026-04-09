@@ -107,7 +107,7 @@ with st.sidebar:
     st.markdown("---")
     try:
         st.caption("🟢 Backend: Online")
-    except:
+    except Exception:
         st.error("❌ Backend: Offline")
 
 # ==============================================================================

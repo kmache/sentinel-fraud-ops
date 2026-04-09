@@ -64,9 +64,15 @@ def calculate_psi(expected_pct, actual_values, bin_edges):
         print(f"Error calculating PSI: {e}")
         return 0.0
     
-def check_feature_drift(live_data_array, baseline_item):
+def check_feature_drift(live_data_array, baseline_item, psi_threshold=0.2, null_drift_threshold=0.1):
     """
     Check drift for a single feature, handling high NaN cases.
+    
+    Args:
+        live_data_array: Array of live feature values.
+        baseline_item: Dict with expected_null_rate, expected_pct, bin_edges, is_sparse.
+        psi_threshold: PSI above this indicates distribution drift.
+        null_drift_threshold: Null rate change above this indicates availability drift.
     """
     # 1. Check Availability Drift (Null Rate Change)
     live_null_rate = np.isnan(live_data_array).sum() / len(live_data_array)
@@ -87,5 +93,5 @@ def check_feature_drift(live_data_array, baseline_item):
     return {
         "psi": psi_score,
         "null_drift": null_drift,
-        "status": "RED" if (psi_score > 0.2 or null_drift > 0.1) else "GREEN"
+        "status": "RED" if (psi_score > psi_threshold or null_drift > null_drift_threshold) else "GREEN"
     }

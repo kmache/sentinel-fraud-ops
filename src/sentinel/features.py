@@ -1,14 +1,17 @@
 import pandas as pd
 import numpy as np
+import hashlib
+import logging
 from sklearn.base import BaseEstimator, TransformerMixin
 from typing import Dict, Union, List, Optional
 import re
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from sentinel.exceptions import FeatureEngineeringError
 
-#***********************************************************************************#
-#************ Part II: Features Engineering  ***************************************#
-#***********************************************************************************#
+logger = logging.getLogger("SentinelFeatureEngineering")
+
+
 class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
     """
     Sentinel Feature Engineering (v7.0 - The "Grandmaster" Edition).
@@ -203,18 +206,36 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
         
         if len(active_users) > 0:
             mask = df[self.user_key].isin(active_users)
-            df_active = df[mask].copy()
+            df_active = df.loc[mask].copy()
+            df_active['_orig_idx'] = df_active.index  # preserve original integer index
             df_active['_temp_dt'] = pd.to_datetime(df_active[self.time_col], unit='s', origin='2017-11-30')
             df_active = df_active.set_index('_temp_dt').sort_index()
             g = df_active.groupby(self.user_key)['TransactionAmt']
             
             for w_name, w_str in windows.items():
                 rolled = g.rolling(window=w_str, closed='left')
-                df.loc[mask, f'{self.user_key}_count_{w_name}'] = rolled.count().fillna(0).values.astype('i2')
-                df.loc[mask, f'{self.user_key}_amt_sum_{w_name}'] = rolled.sum().fillna(0).values.astype('f4')
+                count_col = f'{self.user_key}_count_{w_name}'
+                sum_col = f'{self.user_key}_amt_sum_{w_name}'
+                vel_col = f'{self.user_key}_velocity_{w_name}'
+                
+                rolled_count = rolled.count().fillna(0).droplevel(0)
+                rolled_sum = rolled.sum().fillna(0).droplevel(0)
+                
+                # Positional assignment within df_active (same sort order as rolled result)
+                df_active[count_col] = rolled_count.values.astype('i2')
+                df_active[sum_col] = rolled_sum.values.astype('f4')
                 
                 hours = int(w_name.replace('h',''))
-                df.loc[mask, f'{self.user_key}_velocity_{w_name}'] = (df.loc[mask, f'{self.user_key}_amt_sum_{w_name}'] / hours).astype('f4')
+                df_active[vel_col] = (df_active[sum_col] / hours).astype('f4')
+            
+            # Map computed columns back to df using saved integer indices
+            orig_indices = df_active['_orig_idx'].values
+            velocity_cols = [c for c in df_active.columns 
+                           if c.startswith(f'{self.user_key}_count_') 
+                           or c.startswith(f'{self.user_key}_amt_sum_') 
+                           or c.startswith(f'{self.user_key}_velocity_')]
+            for col in velocity_cols:
+                df.loc[orig_indices, col] = df_active[col].values
         
         for w in windows:
             c = f'{self.user_key}_count_{w}'
@@ -268,6 +289,9 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
         return df
 
     def _add_graph_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        # NOTE: These use within-batch groupby, which is acceptable for batch
+        # inference (same as training) but should use pre-computed historical
+        # stats for single-transaction online inference.
         for col in ['device_vendor', 'addr1']:
             if col in df.columns:
                 df[f'{col}_degree'] = df.groupby(col)[self.user_key].transform('nunique').fillna(0).astype('i2')
@@ -305,7 +329,7 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
                 self.v_group_mapping[group_name] = cols
                 
                 sample_size = min(100000, len(X))
-                data = X[cols].sample(sample_size, random_state=42).fillna(-1)
+                data = X[cols].sample(sample_size, random_state=42).fillna(0)
                 
                 scaler = StandardScaler()
                 data_scaled = scaler.fit_transform(data)
@@ -334,7 +358,7 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
             
             try:
                 scaler, pca = self.v_pca_models[group_name]
-                data = X[valid_cols].fillna(-1)
+                data = X[valid_cols].fillna(0)
                 data_scaled = scaler.transform(data)
                 data_pca = pca.transform(data_scaled)
                 
@@ -346,7 +370,7 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
                 
                 cols_to_drop.extend(valid_cols)
             except Exception as e:
-                if self.verbose: print(f"Warning: PCA skipped for {group_name} due to drift: {e}")
+                logger.warning("PCA skipped for %s due to drift: %s", group_name, e)
                 
         if cols_to_drop:
             X = X.drop(columns=cols_to_drop, errors='ignore')
@@ -396,7 +420,9 @@ class SentinelFeatureEngineering(BaseEstimator, TransformerMixin):
         
         df = df.copy()
         if 'UID' in df.columns:
-            df['UID_hash'] = (df['UID'].astype(str).apply(hash) % 10000).astype('i4')
+            df['UID_hash'] = df['UID'].astype(str).apply(
+                lambda x: int(hashlib.md5(x.encode()).hexdigest(), 16) % 10000
+            ).astype('i4')
             
         return df
 
