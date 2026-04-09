@@ -8,8 +8,10 @@ import sys
 from datetime import datetime
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from sentinel.evaluation import SentinelEvaluator
-from sentinel.monitoring import calculate_psi 
+from sentinel.monitoring import calculate_psi
+from config.config import get_business_costs, get_monitoring_config, get_worker_config
 
 # Config
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
@@ -32,15 +34,19 @@ class GlobalMetricsWorker:
         self.y_true = []
         self.amounts = []
         self.last_idx = 0 
-        self.cost_params = {'cb_fee': 25.0, 'support_cost': 15.0, 'churn_factor': 0.1}
+        self.cost_params = get_business_costs()
+
+        mon_cfg = get_monitoring_config()
+        worker_cfg = get_worker_config()
 
         self.current_threshold = float(self.r.get('config:threshold') or 0.10898989898989898)
 
-        self.OPTIMIZE_EVERY = 1000
+        self.OPTIMIZE_EVERY = int(worker_cfg.get('optimize_every', 1000))
         self.last_optimized_count = 0
 
         self.last_drift_run = 0
-        self.DRIFT_INTERVAL = 60 
+        self.DRIFT_INTERVAL = int(mon_cfg.get('drift_check_interval', 60))
+        self.TOP_FEATURES_COUNT = int(mon_cfg.get('top_features_count', 30))
 
     def sync_data(self):
         """Chronologically syncs new data from Redis into local RAM."""
@@ -71,7 +77,7 @@ class GlobalMetricsWorker:
             logger.warning("⚠️ No feature importance data found in Redis. Skipping drift check.")
             return
         importance_data = json.loads(importance_json)
-        top_features = sorted(importance_data, key=importance_data.get, reverse=True)[:30]
+        top_features = sorted(importance_data, key=importance_data.get, reverse=True)[:self.TOP_FEATURES_COUNT]
 
         baseline_json = self.r.get("stats:training_distribution")
         if not baseline_json:
@@ -172,7 +178,7 @@ class GlobalMetricsWorker:
                         "updated_at": datetime.now().replace(microsecond=0).isoformat(),
                     }
 
-                    self.r.set("stats:stat_bussiness_report", json.dumps(full_report))
+                    self.r.set("stats:stat_business_report", json.dumps(full_report))
                     
                     duration = time.time() - start_time
                     logger.info(f"✅ Full Report Updated. Count: {len(self.y_true)} | Time: {duration:.2f}s")

@@ -13,6 +13,7 @@ import os
 import sys
 import json
 import logging
+import signal
 import time
 import redis
 import threading
@@ -25,14 +26,24 @@ from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import NoBrokersAvailable, CommitFailedError
 from circuitbreaker import circuit, CircuitBreakerError
 
+# Graceful shutdown flag — set by SIGTERM/SIGINT handlers
+_shutdown_requested = threading.Event()
+
 # Add src to path for shared library
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 try:
     from sentinel.inference import SentinelInference
 except ImportError:
     print("❌ Critical: Could not import SentinelInference. Check PYTHONPATH.")
     sys.exit(1)
+
+try:
+    from config.config import get_worker_config
+    _worker_cfg = get_worker_config()
+except Exception:
+    _worker_cfg = {}
 
 # ==============================================================================
 # 1. STRUCTURED LOGGING
@@ -75,11 +86,18 @@ REDIS_DB = int(os.getenv('REDIS_DB', '0'))
 REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
 
 MODEL_DIR = os.getenv('MODEL_DIR', '/app/models/prod_v1')
+SENTINEL_MODE = os.getenv('SENTINEL_MODE', 'demo')  # 'demo' or 'production'
 
 # Cache for drift monitoring
 _CACHED_MONITORED_FEATURES = []
 _LAST_IMPORTANCE_REFRESH = 0
-IMPORTANCE_REFRESH_INTERVAL = 300  # Refresh Top 50 list every 5 minutes (300s)
+IMPORTANCE_REFRESH_INTERVAL = int(_worker_cfg.get('importance_refresh_interval', 300))
+EMA_ALPHA = float(_worker_cfg.get('ema_alpha', 0.1))
+TOP_FEATURES_STORE = int(_worker_cfg.get('top_features_store', 50))
+
+# Timeseries deduplication state
+_LAST_TS_WRITE_TIME = 0
+_LAST_SAVED_VALUE = -1.0
 
 # ==============================================================================
 # 3. INITIALIZE CONNECTIONS
@@ -213,7 +231,7 @@ def update_global_feature_importance(batch_explanations):
         # Apply Moving Average
         if old_data_json:
             old_data = json.loads(old_data_json)
-            alpha = 0.1 
+            alpha = EMA_ALPHA
             merged_data = {}
             all_keys = set(batch_avg.keys()) | set(old_data.keys())
             
@@ -224,7 +242,7 @@ def update_global_feature_importance(batch_explanations):
         else:
             merged_data = batch_avg
 
-        sorted_items = sorted(merged_data.items(), key=lambda x: x[1], reverse=True)[:50]
+        sorted_items = sorted(merged_data.items(), key=lambda x: x[1], reverse=True)[:TOP_FEATURES_STORE]
         final_payload = dict(sorted_items)
 
         redis_client.set(redis_key, json.dumps(final_payload))
@@ -232,7 +250,7 @@ def update_global_feature_importance(batch_explanations):
     except Exception as e:
         logger.error(f"⚠️ Global SHAP Update Failed: {e}")
 
-def log_raw_features_for_drift(pipe, raw_data_processed         ):
+def log_raw_features_for_drift(pipe, raw_data_processed):
     """
     Pushes raw feature values to Redis lists for drift analysis.
     Uses a cache to avoid hitting Redis for the 'Top 50' list every batch.
@@ -305,6 +323,20 @@ def async_enrich_shap(ids, raw_data):
             
     except Exception as e:
         logger.error(f"❌ Async SHAP Failed: {str(e)}")
+        # Mark all transactions in this batch as explanation-failed
+        try:
+            fail_pipe = redis_client.pipeline()
+            for tx_id in ids:
+                key = f"prediction:{tx_id}"
+                current_json = redis_client.get(key)
+                if current_json:
+                    data = json.loads(current_json)
+                    data['explanation_status'] = "failed"
+                    data['explanation_error'] = str(e)
+                    fail_pipe.setex(key, 3600, json.dumps(data))
+            fail_pipe.execute()
+        except Exception as mark_err:
+            logger.error(f"❌ Failed to mark SHAP failure status: {mark_err}")
 
 # ==============================================================================
 # 5. BATCH LOGIC WITH CIRCUIT BREAKER
@@ -332,46 +364,50 @@ def flush_batch(messages):
         send_to_dlq(raw_data, "inference_batch_error", e)
         return
 
-    TS_MIN_INTERVAL = 10 
-    TS_VALUE_DELTA = 500.0 
+    TS_MIN_INTERVAL = int(_worker_cfg.get('ts_min_interval', 10))
+    TS_VALUE_DELTA = float(_worker_cfg.get('ts_value_delta', 500.0))
     # --- 2. PREPARE PIPELINE ---
     ids = results['transaction_id']
     probs = results['probabilities']
     is_frauds = results['is_frauds'] # Predict as Fraud by the model 
     actions = results['actions']
-    y_trues = results['y_true']
+    y_trues = results.get('y_true')  # None in production mode
     dashboard_records = results['dashboard_data']
     weights = results.get("meta", {}).get("weights", {})
 
+    # In production mode, ground truth is unavailable
+    has_ground_truth = y_trues is not None and SENTINEL_MODE == 'demo'
+    if not has_ground_truth:
+        y_trues = [0] * len(ids)  # placeholder; financial metrics will be skipped
+
     latency_ms = results.get("meta", {}).get("latency_ms", -1)
-    pipe = redis_client.pipeline()
-    pipe.set("stats:live_latency_ms", latency_ms) 
-    pipe.execute()  
+    latency_pipe = redis_client.pipeline()
+    latency_pipe.set("stats:live_latency_ms", latency_ms) 
+    latency_pipe.execute()  
 
     batch_savings_delta = 0.0
     batch_loss_delta = 0.0
 
-    for i in range(len(ids)):
-        amt = float(dashboard_records[i].get('TransactionAmt', 0.0))
-        truth = int(y_trues[i])
-        decision = int(is_frauds[i]) # 1 = Blocked, 0 = Allowed
-        if truth == 1:
-            if decision == 1:
-                batch_savings_delta += amt
-            else:
-                batch_loss_delta += amt
+    if has_ground_truth:
+        for i in range(len(ids)):
+            amt = float(dashboard_records[i].get('TransactionAmt', 0.0))
+            truth = int(y_trues[i])
+            decision = int(is_frauds[i]) # 1 = Blocked, 0 = Allowed
+            if truth == 1:
+                if decision == 1:
+                    batch_savings_delta += amt
+                else:
+                    batch_loss_delta += amt
 
-    pipe = redis_client.pipeline()
-    pipe.incrbyfloat('stats:global_savings', batch_savings_delta)
-    pipe.incrbyfloat('stats:global_loss', batch_loss_delta)
+    savings_pipe = redis_client.pipeline()
+    savings_pipe.incrbyfloat('stats:global_savings', batch_savings_delta)
+    savings_pipe.incrbyfloat('stats:global_loss', batch_loss_delta)
 
-    new_totals = pipe.execute() 
+    new_totals = savings_pipe.execute() 
     current_total_saved = float(new_totals[0])
     current_total_loss = float(new_totals[1])
 
     global _LAST_TS_WRITE_TIME, _LAST_SAVED_VALUE
-    _LAST_TS_WRITE_TIME = 0
-    _LAST_SAVED_VALUE = -1.0
     now = time.time()
     should_write = False
 
@@ -387,22 +423,20 @@ def flush_batch(messages):
             "cumulative_savings": current_total_saved,
             "cumulative_loss": current_total_loss
         }
-        pipe = redis_client.pipeline()
-        pipe.rpush('sentinel_timeseries', json.dumps(ts_point))
+        ts_pipe = redis_client.pipeline()
+        ts_pipe.rpush('sentinel_timeseries', json.dumps(ts_point))
+        ts_pipe.ltrim('sentinel_timeseries', -100000, -1) 
 
-        _LAST_TS_WRITE_TIME = now
-        _LAST_SAVED_VALUE = current_total_saved
-        pipe.ltrim('sentinel_timeseries', -100000, -1) 
+        log_raw_features_for_drift(ts_pipe, raw_processed)
 
-        log_raw_features_for_drift(pipe, raw_processed)
-
-        execute_redis_pipeline(pipe)
+        execute_redis_pipeline(ts_pipe)
 
         _LAST_TS_WRITE_TIME = now
         _LAST_SAVED_VALUE = current_total_saved 
 
     count_fraud = 0
     count_legit = 0
+    txn_pipe = redis_client.pipeline()
     for i in range(len(ids)):
         score = float(probs[i])
         amt = float(dashboard_records[i].get('TransactionAmt', 0.0)) 
@@ -424,30 +458,30 @@ def flush_batch(messages):
         payload_json = json.dumps(payload)
         
         # Redis Commands
-        pipe.lpush('sentinel_stream', payload_json)
-        pipe.setex(f"prediction:{ids[i]}", 3600, payload_json)
+        txn_pipe.lpush('sentinel_stream', payload_json)
+        txn_pipe.setex(f"prediction:{ids[i]}", 3600, payload_json)
 
-        pipe.rpush('stats:hist_y_prob', score)
-        pipe.rpush('stats:hist_y_true', truth)
-        pipe.rpush('stats:hist_amounts', amt)
+        txn_pipe.rpush('stats:hist_y_prob', score)
+        txn_pipe.rpush('stats:hist_y_true', truth)
+        txn_pipe.rpush('stats:hist_amounts', amt)
         
         if payload['is_fraud'] == 1:
             count_fraud += 1
-            pipe.lpush('sentinel_alerts', payload_json)
-            pipe.ltrim('sentinel_alerts', 0, 99)
+            txn_pipe.lpush('sentinel_alerts', payload_json)
+            txn_pipe.ltrim('sentinel_alerts', 0, 99)
         else:
             count_legit += 1
         if kafka_producer:
             kafka_producer.send(OUTPUT_TOPIC, value=payload)
 
     # Redis Cleanup
-    pipe.ltrim('sentinel_stream', 0, 999)
-    pipe.incrby('stats:fraud_count', count_fraud)
-    pipe.incrby('stats:legit_count', count_legit)
+    txn_pipe.ltrim('sentinel_stream', 0, 999)
+    txn_pipe.incrby('stats:fraud_count', count_fraud)
+    txn_pipe.incrby('stats:legit_count', count_legit)
 
     # --- 3. EXECUTE PIPELINE (Circuit Protected) ---
     try:
-        execute_redis_pipeline(pipe)
+        execute_redis_pipeline(txn_pipe)
         if len(ids) > 0:
             t = threading.Thread(target=async_enrich_shap, args=(ids, raw_data))
             t.daemon = True
@@ -496,6 +530,14 @@ def run():
         log_event("💥 Fatal Loop Error", error=str(e))
         traceback.print_exc()
     finally:
+        # Flush remaining batch before exit
+        if batch:
+            logger.info(f"Flushing {len(batch)} remaining messages before shutdown...")
+            try:
+                flush_batch(batch)
+                consumer.commit()
+            except Exception as e:
+                logger.error(f"Failed to flush final batch: {e}")
         if consumer: consumer.close()
         if kafka_producer: kafka_producer.close()
         logger.info("👋 Worker Closed")

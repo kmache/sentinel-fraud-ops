@@ -1,0 +1,40 @@
+# Data files (large)
+data/
+*.csv
+
+# Notebooks
+notebooks/
+*.ipynb
+
+# Images & docs
+images/
+README.md
+LICENSE
+
+# Git
+.git/
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+src/sentinel.egg-info/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Models (mounted via volume, not baked into image)
+models/
+
+# Tests (not needed in production images)
+tests/
+scripts/

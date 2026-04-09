@@ -4,6 +4,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:/app/src
 
 WORKDIR /app
 
@@ -24,7 +25,8 @@ COPY pyproject.toml .
 COPY src/ src/
 RUN uv pip install --system --no-cache -e .
 
-# 3. Copy Worker script
+# 3. Copy Config and Worker scripts
+COPY config/ config/
 COPY worker/processor.py .
 COPY worker/metrics.py .
 

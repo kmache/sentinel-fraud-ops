@@ -1,3 +1,6 @@
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
-httpx>=0.24.0  # For FastAPI TestClient
+pytest-cov>=4.1.0
+httpx>=0.24.0
+fakeredis>=2.20.0
+locust>=2.20.0

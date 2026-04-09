@@ -57,3 +57,25 @@ evaluation:
   tiers:
     soft_threshold: 0.15
     hard_threshold: 0.75
+
+preprocessing:
+  nan_threshold: 0.90            # Drop columns with >90% NaN
+  correlation_threshold: 0.98    # Drop features correlated above this
+  null_drop_threshold: 0.99      # Drop columns with >99% null in fit()
+
+monitoring:
+  psi_threshold: 0.2             # PSI above this = distribution drift (RED)
+  null_drift_threshold: 0.1      # Null-rate change above this = availability drift
+  top_features_count: 30         # Number of top features to monitor for drift
+  drift_check_interval: 60       # Seconds between drift checks
+
+worker:
+  importance_refresh_interval: 300  # Seconds between refreshing top-50 feature list
+  ema_alpha: 0.1                    # Exponential Moving Average decay for SHAP aggregation
+  top_features_store: 50            # Number of top features to keep in global importance
+  ts_min_interval: 10               # Min seconds between timeseries writes
+  ts_value_delta: 500.0             # Min savings change to force a timeseries write
+  optimize_every: 1000              # Re-optimize threshold every N new predictions
+
+api:
+  timeseries_max_points: 1000       # Max datapoints returned by /exec/series

@@ -1,4 +1,3 @@
-from os import name
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,9 +10,7 @@ from typing import List, Optional
 from tqdm.auto import tqdm
 from sklearn.metrics import roc_auc_score
 import re
-#***********************************************************************************#
-#************ Part III: Feature Quality & Drift Analysis ***************************#
-#***********************************************************************************#
+
 class SentinelFeatureQuality(BaseEstimator, TransformerMixin):
     """
     Sentinel Feature Quality Engine (v8.0).
@@ -170,7 +167,7 @@ class SentinelFeatureQuality(BaseEstimator, TransformerMixin):
             act_percents = np.where(act_percents == 0, 0.0001, act_percents)
             
             return np.sum((exp_percents - act_percents) * np.log(exp_percents / act_percents))
-        except:
+        except Exception:
             return 0
 
 
@@ -247,7 +244,8 @@ class SentinelFeatureQuality(BaseEstimator, TransformerMixin):
             if log_scale: plt.xscale('log')
             plt.legend()
             plt.show()
-        except: pass
+        except Exception:
+            pass
 
 
     def plot_fraud_network(self, user_col: str, device_col: str, top_n_rings: int = 3):

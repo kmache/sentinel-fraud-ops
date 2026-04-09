@@ -1,11 +1,13 @@
 import pandas as pd
 import numpy as np
+import logging
 from sklearn.base import BaseEstimator, TransformerMixin
 from typing import List, Union, Optional
+from sentinel.exceptions import PreprocessingError
 
-#***********************************************************************************#
-#************* Data Preprocessing **************************************************#
-#***********************************************************************************#
+logger = logging.getLogger("SentinelPreprocessing")
+
+
 class SentinelPreprocessing(BaseEstimator, TransformerMixin):
     """
     Sentinel Fraud Detection Preprocessing (v4.0 Final).
@@ -172,7 +174,8 @@ class SentinelPreprocessing(BaseEstimator, TransformerMixin):
                 'edu': 'USA/Global'
             }
             return mapping.get(suffix, "USA/Global")
-        except:
+        except Exception:
+            logger.debug("Could not parse country from domain: %s", domain)
             return "Unknown"
 
 

@@ -1,5 +1,6 @@
 import os
 import sys
+import html as html_mod
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -42,6 +43,8 @@ def _render_case_header(data: dict):
     color = COLORS['danger'] if is_fraud else COLORS['safe']
     status = "🛑 HIGH RISK: BLOCKED" if is_fraud else "✅ LOW RISK: APPROVED"
     
+    safe_tx_id = html_mod.escape(str(data.get('transaction_id', '')))
+    safe_score = html_mod.escape(f"{score:.3f}")
     st.markdown(f"""
     <div style="
         background: linear-gradient(90deg, {color}22 0%, rgba(0,0,0,0) 100%);
@@ -52,10 +55,10 @@ def _render_case_header(data: dict):
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
                 <h2 style="margin: 0; color: #fff;">{status}</h2>
-                <p style="margin: 5px 0 0 0; color: #aaa; font-family: monospace;">ID: {data.get('transaction_id')}</p>
+                <p style="margin: 5px 0 0 0; color: #aaa; font-family: monospace;">ID: {safe_tx_id}</p>
             </div>
             <div style="text-align: right;">
-                <span style="font-size: 2.5rem; font-weight: bold; color: {color};">{score:.3f}</span>
+                <span style="font-size: 2.5rem; font-weight: bold; color: {color};">{safe_score}</span>
                 <br><span style="color: #aaa;">Risk Score</span>
             </div>
         </div>
