@@ -207,31 +207,12 @@ locust -f tests/load_test.py --host=http://localhost:8000 --headless -u 100 -r 1
 
 *Benchmarks measured on batch size=100, single worker, 4-core CPU, 16GB RAM.*
 
-### Dashboard Screenshots
+### Dashboard
 
-**Executive Overview**
-<p align="center">
-  <img src="images/overview.png" width="900" alt="Executive Overview">
-</p>
+The Sentinel Ops Center ships with five specialized views: **Executive Overview** for KPIs and financial impact, **Ops Center** for live alert triage, **ML Monitor** for model health and feature drift, **Strategy** for threshold optimization, and **Forensics** for SHAP-powered transaction deep-dives.
 
-**Ops Center**
 <p align="center">
-  <img src="images/ops.png" width="900" alt="Ops Center">
-</p>
-
-**ML Monitoring**
-<p align="center">
-  <img src="images/ml.png" width="900" alt="ML Monitoring">
-</p>
-
-**Strategy Optimization**
-<p align="center">
-  <img src="images/strategy.png" width="900" alt="Strategy">
-</p>
-
-**Transaction Forensics**
-<p align="center">
-  <img src="images/deep-dive.png" width="900" alt="Forensics">
+  <img src="images/dashboard_view.gif" width="900" alt="Sentinel Dashboard Views">
 </p>
 
 ## 🏗 Architecture Decision Records
