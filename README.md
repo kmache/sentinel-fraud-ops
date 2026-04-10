@@ -161,7 +161,7 @@ cd sentinel-fraud-ops
 # → data/ into data/raw/
 
 # 3. Start everything
-docker-compose up --build
+docker compose up --build
 
 # 4. Open dashboard
 open http://localhost:8501
@@ -260,10 +260,10 @@ The Sentinel Ops Center ships with five specialized views: **Executive Overview*
 docker-compose ps redis
 
 # Test connectivity
-docker-compose exec redis redis-cli ping
+docker compose exec redis redis-cli ping
 
 # Check Redis logs
-docker-compose logs redis
+docker compose logs redis
 
 # If Redis keeps restarting, check memory limits
 docker stats sentinel-fraud-ops-redis-1
@@ -277,19 +277,19 @@ docker stats sentinel-fraud-ops-redis-1
 **Fix**:
 ```bash
 # Check Kafka broker status
-docker-compose logs kafka | tail -20
+docker compose logs kafka | tail -20
 
 # Verify topic exists
-docker-compose exec kafka kafka-topics.sh --list --bootstrap-server localhost:29092
+docker compose exec kafka kafka-topics.sh --list --bootstrap-server localhost:29092
 
 # Check consumer group lag
-docker-compose exec kafka kafka-consumer-groups.sh \
+docker compose exec kafka kafka-consumer-groups.sh \
   --bootstrap-server localhost:29092 \
   --group sentinel-workers \
   --describe
 
 # Restart from earliest offset (destructive)
-docker-compose restart worker
+docker compose restart worker
 ```
 
 ### Model Loading Failures
@@ -306,7 +306,7 @@ ls -la models/prod_v1/*.pkl
 python scripts/download_data.py
 
 # Check Docker volume mount
-docker-compose exec worker ls -la /app/models/prod_v1/
+docker compose exec worker ls -la /app/models/prod_v1/
 ```
 
 ### Dashboard Shows "No Data Available"
